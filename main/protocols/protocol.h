@@ -55,6 +55,7 @@ public:
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendIotDescriptors(const std::string& descriptors);
+    virtual void SendIotCameraPhoto(const std::vector<uint8_t>& photo_data, int width, int height, const std::string& format);
     virtual void SendIotStates(const std::string& states);
 
 protected:
