@@ -6,12 +6,21 @@
 #include "config.h"
 #include "i2c_device.h"
 #include "iot/thing_manager.h"
+#include "audio_processing/opus_processor.h"
 
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
 #include <wifi_station.h>
+#include <esp_timer.h>
+#include <cstring>     // 添加cstring头文件，用于memcpy
+#include <arpa/inet.h> // 添加arpa/inet.h头文件，用于ntohs
+
+// 引入test.h中的opus数据
+#include "audios/test1.h"
+#include "audios/test2.h"
+#include "audios/test3.h"
 
 #define TAG "LichuangDevBoard"
 
@@ -40,6 +49,7 @@ private:
     Button boot_button_;
     LcdDisplay* display_;
     Pca9557* pca9557_;
+    esp_timer_handle_t state_checker_timer_ = nullptr;
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -132,14 +142,81 @@ private:
         thing_manager.AddThing(iot::CreateThing("Screen"));
     }
 
+    void InitializeTimer() {
+        // 创建状态检查定时器，定期检查设备状态
+        esp_timer_create_args_t state_checker_args = {
+            .callback = [](void *arg) {
+                LichuangDevBoard *board = static_cast<LichuangDevBoard*>(arg);
+                board->CheckDeviceState();
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "state_checker_timer",
+            .skip_unhandled_events = false,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&state_checker_args, &state_checker_timer_));
+        // 每秒检查一次设备状态
+        ESP_ERROR_CHECK(esp_timer_start_periodic(state_checker_timer_, 1000000));
+    }
+
+    void CheckDeviceState() {
+        auto& app = Application::GetInstance();
+        DeviceState current_state = app.GetDeviceState();
+        static DeviceState previous_state = kDeviceStateUnknown;
+        
+        // 打印当前状态
+        ESP_LOGI(TAG, "检查设备状态 - 当前状态: %d, 上一个状态: %d", current_state, previous_state);
+        
+        // 只有在状态变化并且是目标状态时才开始倒计时
+        if (current_state == kDeviceStateIdle && 
+            current_state != previous_state) {
+            ESP_LOGI(TAG, "设备状态变为待机，开始开场白");
+            
+            app.ToggleChatState();
+        }
+        // 只有在状态变化并且是目标状态时才发送数据
+        if (current_state == kDeviceStateListening && 
+            current_state != previous_state) {
+            ESP_LOGI(TAG, "设备状态变为聆听，开始发送数据");
+            // 停止当前定时器
+            esp_timer_stop(state_checker_timer_);
+            ProcessOpusData();
+        }
+        
+        previous_state = current_state;
+    }
+
+
+    // 处理test.h中的opus数据
+    void ProcessOpusData() {
+        ESP_LOGI(TAG, "开始处理test.h中的opus数据");
+        
+        // 将test.h中的数据转换为opus格式并发送
+        std::vector<uint8_t> opus_data(test2_data, test2_data + sizeof(test2_data));
+        
+        // 创建OpusProcessor处理器
+        OpusProcessor opus_processor(display_);
+        
+        // 处理并发送数据
+        opus_processor.ProcessAndSendOpusData(opus_data);
+    }
+
 public:
     LichuangDevBoard() : boot_button_(BOOT_BUTTON_GPIO) {
         InitializeI2c();
         InitializeSpi();
-        InitializeSt7789Display();
+        InitializeSt7789Display(); 
         InitializeButtons();
         InitializeIot();
+        InitializeTimer();
         GetBacklight()->RestoreBrightness();
+    }
+    
+    ~LichuangDevBoard() {
+        if (state_checker_timer_ != nullptr) {
+            esp_timer_stop(state_checker_timer_);
+            esp_timer_delete(state_checker_timer_);
+        }
     }
 
     virtual AudioCodec* GetAudioCodec() override {
