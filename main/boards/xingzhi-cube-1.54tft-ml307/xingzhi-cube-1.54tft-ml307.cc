@@ -408,6 +408,13 @@ public:
 
     }
 
+    ~XINGZHI_CUBE_1_54TFT_ML307() {
+        if (state_checker_timer_ != nullptr) {
+            esp_timer_stop(state_checker_timer_);
+            esp_timer_delete(state_checker_timer_);
+        }
+    }
+
     virtual AudioCodec* GetAudioCodec() override {
         static NoAudioCodecSimplex audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
             AUDIO_I2S_SPK_GPIO_BCLK, AUDIO_I2S_SPK_GPIO_LRCK, AUDIO_I2S_SPK_GPIO_DOUT, AUDIO_I2S_MIC_GPIO_SCK, AUDIO_I2S_MIC_GPIO_WS, AUDIO_I2S_MIC_GPIO_DIN);
