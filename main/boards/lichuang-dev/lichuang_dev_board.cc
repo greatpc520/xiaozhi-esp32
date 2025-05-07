@@ -29,9 +29,7 @@
 #include "images/doufu/output_0010.h"
 
 // 引入test.h中的opus数据
-#include "audios/test1.h"
 #include "audios/test2.h"
-#include "audios/test3.h"
 
 #define TAG "LichuangDevBoard"
 

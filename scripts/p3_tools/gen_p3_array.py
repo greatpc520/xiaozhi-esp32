@@ -67,9 +67,9 @@ def main():
         array_name = sys.argv[3]
     else:
         # 默认值
-        input_file = "test3.p3"
-        output_file = "test3.h"
-        array_name = "test3_data"
+        input_file = "test2.p3"
+        output_file = "test2.h"
+        array_name = "test2_data"
         print(f"使用默认参数: {input_file}, {output_file}, {array_name}")
         print("您也可以指定参数: python gen_p3_array.py 输入文件.p3 输出文件.h 数组名")
     
