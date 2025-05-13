@@ -890,17 +890,18 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetStatus(Lang::Strings::CONNECTING);
             display->SetEmotion("neutral");
             display->SetChatMessage("system", "");
-            display->SetAnimState("idle");
+            // display->SetAnimState("idle");
             set_backlight(1);
             control_motor(1,100,1);
             break;
         case kDeviceStateListening:
-            display->SetStatus(Lang::Strings::LISTENING);
+            // display->SetStatus(Lang::Strings::LISTENING);
+            display->SetStatus("");
             display->SetEmotion("neutral");
 
             // Update the IoT states before sending the start listening command
             UpdateIotStates();
-            display->SetAnimState("listen");
+            
 
             // Make sure the audio processor is running
             if (!audio_processor_->IsRunning()) {
@@ -916,9 +917,11 @@ void Application::SetDeviceState(DeviceState state) {
 #endif
                 audio_processor_->Start();
             }
+            display->SetAnimState("listen");
             break;
         case kDeviceStateSpeaking:
-            display->SetStatus(Lang::Strings::SPEAKING);
+            // display->SetStatus(Lang::Strings::SPEAKING);
+            display->SetStatus("");
 
             if (listening_mode_ != kListeningModeRealtime) {
                 audio_processor_->Stop();

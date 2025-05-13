@@ -19,6 +19,7 @@ public:
     // void SetAnimState(const std::string& state); // "listen"/"speak"/"idle"
     void SetRoleId(int role_id) override;
     void SetAnimState(const std::string& state) override;
+    void SetEmotion(const char *emotion) override;
 
     std::string current_state_;
 
@@ -30,6 +31,7 @@ protected:
     std::vector<std::string> listen_frames_;
     std::string idle_image_;
     lv_obj_t* anim_img_obj_ = nullptr;
+    lv_obj_t* emotion_label_img = nullptr;
     lv_anim_t anim_;
     int current_frame_idx_ = 0;
     int frame_count_ = 0;
