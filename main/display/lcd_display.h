@@ -9,6 +9,7 @@
 
 #include <atomic>
 
+
 class LcdDisplay : public Display {
 protected:
     esp_lcd_panel_io_handle_t panel_io_ = nullptr;
@@ -22,7 +23,7 @@ protected:
 
     DisplayFonts fonts_;
 
-    void SetupUI();
+    virtual void SetupUI();
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
 

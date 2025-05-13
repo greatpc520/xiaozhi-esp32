@@ -150,7 +150,7 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
         current_theme = LIGHT_THEME;
     }
 
-    SetupUI();
+    // SetupUI();
 }
 
 // RGB LCD实现
@@ -222,7 +222,7 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
         current_theme = LIGHT_THEME;
     }
 
-    SetupUI();
+    // SetupUI();//mc
 }
 
 LcdDisplay::~LcdDisplay() {

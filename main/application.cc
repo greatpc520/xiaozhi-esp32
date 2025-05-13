@@ -39,6 +39,29 @@ static const char* const STATE_STRINGS[] = {
     "invalid_state"
 };
 
+void set_backlight(uint8_t brightness)
+{
+    auto& board = Board::GetInstance();
+    // board.GetBacklight()->SetBrightness(brightness);
+    auto motor = board.SetMotor();
+    uint8_t level=0;
+    if(brightness>0)level=1;
+
+    motor->setbl(level);
+}
+void control_motor(uint8_t motorid, int steps, bool direction)
+{
+    // return;
+    static bool isup=true;
+    if(direction && isup) return;
+    if(direction==false && isup==false) return;
+    isup=direction;
+    auto& board = Board::GetInstance();
+    auto motor = board.SetMotor();
+    // motor->setbl((uint8_t)direction);
+    motor->control_motor(motorid, steps, direction);
+   
+}
 Application::Application() {
     event_group_ = xEventGroupCreate();
     background_task_ = new BackgroundTask(4096 * 8);
@@ -411,10 +434,12 @@ void Application::Start() {
         SetDeviceState(kDeviceStateIdle);
         Alert(Lang::Strings::ERROR, message.c_str(), "sad", Lang::Sounds::P3_EXCLAMATION);
     });
-    protocol_->OnIncomingAudio([this](AudioStreamPacket&& packet) {
+    // protocol_->OnIncomingAudio([this](AudioStreamPacket&& packet) {
+    protocol_->OnIncomingAudio([this,display](AudioStreamPacket&& packet) {
         const int max_packets_in_queue = 600 / OPUS_FRAME_DURATION_MS;
+        display->SetAnimState("speak");//mc
         std::lock_guard<std::mutex> lock(mutex_);
-        if (audio_decode_queue_.size() < max_packets_in_queue) {
+        if (audio_decode_queue_.size() < max_packets_in_queue) {            
             audio_decode_queue_.emplace_back(std::move(packet));
         }
     });
@@ -438,6 +463,8 @@ void Application::Start() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
+            control_motor(1,100,0); //mc
+            set_backlight(0); //mc
         });
     });
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
@@ -519,6 +546,40 @@ void Application::Start() {
                 ESP_LOGW(TAG, "Alert command requires status, message and emotion");
             }
         }
+        if (strcmp(type->valuestring, "hello") == 0) {
+            
+            auto jsonstr = cJSON_GetObjectItem(root, "jsonstr");
+            // char* json_str = cJSON_Print(jsonstr);
+            // if (json_str) {
+            //     ESP_LOGI(TAG, "收到的jsonstr内容: %s", json_str);
+            //     free(json_str); // 打印后记得释放内存
+            // }
+            if (jsonstr != NULL) {
+                auto fileurl = cJSON_GetObjectItem(jsonstr, "fileurl");
+                if (fileurl != NULL) {
+                    // ESP_LOGI(TAG, "File URL: %s", fileurl->valuestring);
+                    // display->SetEmotion(fileurl->valuestring);
+                }
+                auto roletype = cJSON_GetObjectItem(jsonstr, "roletype");
+                if (roletype != NULL) {
+                    std::string role_id;
+                    if (cJSON_IsString(roletype)) {
+                        role_id = roletype->valuestring;
+                    } else if (cJSON_IsNumber(roletype)) {
+                        role_id = std::to_string(roletype->valueint);
+                    }
+                    if (!role_id.empty()) {
+                        static std::string old_role_id="0";
+                        if (old_role_id != role_id) {
+                            old_role_id = role_id;
+                            // display->SetChatMessageTool("init", role_id);
+                            display->SetRoleId(std::stoi(role_id));
+                            ESP_LOGI(TAG, "Role ID: %s", role_id.c_str());
+                        }
+                    }
+                }
+            }
+        }
     });
     bool protocol_started = protocol_->Start();
 
@@ -575,6 +636,10 @@ void Application::Start() {
                 protocol_->SendWakeWordDetected(wake_word);
                 ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
                 SetListeningMode(realtime_chat_enabled_ ? kListeningModeRealtime : kListeningModeAutoStop);
+                // keep_listening_ = true;
+                // SetDeviceState(kDeviceStateIdle);
+                SetDeviceState(kDeviceStateListening);
+                control_motor(1,100,1);
             } else if (device_state_ == kDeviceStateSpeaking) {
                 AbortSpeaking(kAbortReasonWakeWordDetected);
             } else if (device_state_ == kDeviceStateActivating) {
@@ -819,11 +884,15 @@ void Application::SetDeviceState(DeviceState state) {
 #if CONFIG_USE_WAKE_WORD_DETECT
             wake_word_detect_.StartDetection();
 #endif
+            display->SetAnimState("idle");
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
             display->SetEmotion("neutral");
             display->SetChatMessage("system", "");
+            display->SetAnimState("idle");
+            set_backlight(1);
+            control_motor(1,100,1);
             break;
         case kDeviceStateListening:
             display->SetStatus(Lang::Strings::LISTENING);
@@ -831,6 +900,7 @@ void Application::SetDeviceState(DeviceState state) {
 
             // Update the IoT states before sending the start listening command
             UpdateIotStates();
+            display->SetAnimState("listen");
 
             // Make sure the audio processor is running
             if (!audio_processor_->IsRunning()) {
@@ -857,6 +927,7 @@ void Application::SetDeviceState(DeviceState state) {
 #endif
             }
             ResetDecoder();
+            // display->SetAnimState("speak");//mc
             break;
         default:
             // Do nothing

@@ -157,6 +157,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
             if (type != NULL) {
                 if (strcmp(type->valuestring, "hello") == 0) {
                     ParseServerHello(root);
+                    on_incoming_json_(root);//mc
                 } else {
                     if (on_incoming_json_ != nullptr) {
                         on_incoming_json_(root);

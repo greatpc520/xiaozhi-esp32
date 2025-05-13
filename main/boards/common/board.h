@@ -10,6 +10,8 @@
 #include "led/led.h"
 #include "backlight.h"
 
+#include "pcf8574.h"
+
 void* create_board();
 class AudioCodec;
 class Display;
@@ -48,6 +50,7 @@ public:
     virtual std::string GetJson();
     virtual void SetPowerSaveMode(bool enabled) = 0;
     virtual std::string GetBoardJson() = 0;
+    virtual Pcf8574* SetMotor() { return nullptr; }
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \

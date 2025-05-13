@@ -1,6 +1,6 @@
 #include "wifi_board.h"
 #include "audio_codecs/box_audio_codec.h"
-#include "display/lcd_display.h"
+#include "display/spi_lcd_anim_display.h" //"display/lcd_display.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
@@ -14,6 +14,10 @@
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
 #include <wifi_station.h>
+
+#include "pcf8574.h"
+#include "file_manager.h"
+
 
 #define TAG "esp32s3_korvo2_v3"
 
@@ -46,8 +50,11 @@ class Esp32S3Korvo2V3Board : public WifiBoard {
 private:
     Button boot_button_;
     i2c_master_bus_handle_t i2c_bus_;
+    Cst816x *cst816d_;
+    Pcf8574 *pcf8574_;
     LcdDisplay* display_;
     esp_io_expander_handle_t io_expander_ = NULL;
+    esp_io_expander_handle_t io_expander2_ = NULL;
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -87,6 +94,95 @@ private:
         }
     }
 
+    static void touchpad_daemon(void *param)
+    {
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        auto &board = (Esp32S3Korvo2V3Board &)Board::GetInstance();
+        auto touchpad = board.GetTouchpad();
+        bool was_touched = false;
+        while (1)
+        {
+            touchpad->UpdateTouchPoint();
+            if (touchpad->GetTouchPoint().num > 0)
+            {
+                // On press
+                if (!was_touched)
+                {
+                    was_touched = true;
+                    Application::GetInstance().ToggleChatState();
+                }
+            }
+            // On release
+            else if (was_touched)
+            {
+                was_touched = false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        vTaskDelete(NULL);
+    }
+
+    void InitCst816d()
+    {
+        ESP_LOGI(TAG, "Init CST816x");
+        try
+        {
+         cst816d_ = new Cst816x(i2c_bus_, 0x15);   /* code */
+        }
+        catch(const std::exception& e)
+        {
+            // std::cerr << e.what() << '\n';
+            ESP_LOGI(TAG, "init cst816 err");
+            return;
+        }
+        
+        
+        xTaskCreate(touchpad_daemon, "tp", 2048, NULL, 5, NULL);
+    }
+    static void motor_daemon(void *param)
+    {
+        vTaskDelay(pdMS_TO_TICKS(3500));
+        auto &board = (Esp32S3Korvo2V3Board &)Board::GetInstance();
+        auto motor = board.SetMotor();
+        
+        motor->motor_reset();//step_test();
+        // motor->control_motor(1, 100, 0);
+        Application::GetInstance().ToggleChatState();
+        vTaskDelete(NULL);
+    }
+
+    void InitPcf8574()
+    {
+        ESP_LOGI(TAG, "Init Pcf8574");
+        pcf8574_ = new Pcf8574(i2c_bus_, 0x27,io_expander_);
+        // pcf8574_->motor_reset();
+        xTaskCreate(motor_daemon, "motor", 2048*2, NULL, 5, NULL);
+        // 1开机：亮屏，复位+抬头，倾听动画
+        // 2倾听：亮屏，抬头，倾听动画
+        // 3说话：亮屏，抬头，说话动画+表情动画
+        // 4待机： 黑屏，低头
+    }
+    // void InitializeTca9554_2() {
+    //     return;
+    //     esp_err_t ret = esp_io_expander_new_i2c_tca9554(i2c_bus_, ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_001, &io_expander2_);
+    //     if(ret != ESP_OK) {
+    //         ret = esp_io_expander_new_i2c_tca9554(i2c_bus_, ESP_IO_EXPANDER_I2C_TCA9554A_ADDRESS_001, &io_expander2_);
+    //         if(ret != ESP_OK) {
+    //             ESP_LOGE(TAG, "TCA9554 create returned error");  
+    //             return;
+    //         }
+    //     }
+    //     // 配置IO0-IO3为输出模式 
+    //     // IO0=nc,IO1=usb-det, IO2=chrg, IO3=rtc-int, IO4=hall1, IO5=hall2, IO6=ir, IO7=motor-en
+    //     ESP_ERROR_CHECK(esp_io_expander_set_dir(io_expander2_, IO_EXPANDER_PIN_NUM_7 ,  IO_EXPANDER_OUTPUT));
+    //     // ESP_ERROR_CHECK(esp_io_expander_set_dir(io_expander2_, 
+    //     //     IO_EXPANDER_PIN_NUM_4 | IO_EXPANDER_PIN_NUM_1 | 
+    //     //     IO_EXPANDER_PIN_NUM_2 | IO_EXPANDER_PIN_NUM_5 | IO_EXPANDER_PIN_NUM_3, 
+    //     //     IO_EXPANDER_INPUT));
+
+    //     // 复位LCD和TouchPad
+    //     ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander2_, IO_EXPANDER_PIN_NUM_7, 1));
+    // }
     void InitializeTca9554() {
         esp_err_t ret = esp_io_expander_new_i2c_tca9554(i2c_bus_, ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000, &io_expander_);
         if(ret != ESP_OK) {
@@ -216,7 +312,7 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y));
         ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel, true));
 
-        display_ = new SpiLcdDisplay(panel_io, panel,
+        display_ = new SpiLcdAnimDisplay(panel_io, panel,
                                      DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
                                      {
                                          .text_font = &font_puhui_20_4,
@@ -229,7 +325,20 @@ private:
     void InitializeIot() {
         auto& thing_manager = iot::ThingManager::GetInstance();
         thing_manager.AddThing(iot::CreateThing("Speaker"));
+        thing_manager.AddThing(iot::CreateThing("Chassis"));
 
+    }
+
+        void init_sd()
+    {
+        esp_err_t ret = fm_sdcard_init();
+        if(ret != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to initialize SD card, error=%d", ret);
+            // return;
+        }
+        // ESP_LOGI(TAG, "Initializing esp32s3_korvo2_v3 Board");
+        // #elif CONFIG_IDF_TARGET_ESP32P4
     }
 
 public:
@@ -237,7 +346,10 @@ public:
         ESP_LOGI(TAG, "Initializing esp32s3_korvo2_v3 Board");
         InitializeI2c();
         I2cDetect();
+        init_sd();
+        InitCst816d();
         InitializeTca9554();
+        InitPcf8574();
         InitializeSpi();
         InitializeButtons();
         #ifdef LCD_TYPE_ILI9341_SERIAL
@@ -267,6 +379,15 @@ public:
 
     virtual Display *GetDisplay() override {
         return display_;
+    }
+        Cst816x *GetTouchpad()
+    {
+        return cst816d_;
+    }
+    
+    virtual Pcf8574 *SetMotor() override
+    {
+        return pcf8574_;
     }
 };
 
