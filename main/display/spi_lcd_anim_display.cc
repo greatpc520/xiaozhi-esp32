@@ -154,7 +154,7 @@ static void LoadIdleRaw(const std::string& dir) {
     }
     DIR* d = opendir(dir.c_str());
     if (!d) {
-        ESP_LOGE(TAG, "LoadIdleRaw: %s, failed", dir.c_str());
+        ESP_LOGE(TAG, "LoadIdleRaw: %s,opendir failed", dir.c_str());
         return;
     }
     struct dirent* ent;
@@ -170,17 +170,24 @@ static void LoadIdleRaw(const std::string& dir) {
         if (fp) {
             idle_img_cache = (uint8_t*)heap_caps_malloc(FRAME_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
             if (idle_img_cache) {
-                fread(idle_img_cache, 1, FRAME_SIZE, fp);
-                ESP_LOGI(TAG, "LoadIdleRaw: %s, success", files[0].c_str());
+                // fread(idle_img_cache, 1, FRAME_SIZE, fp);
+                size_t read_bytes = fread(idle_img_cache, 1, FRAME_SIZE, fp);
+                if (read_bytes == FRAME_SIZE) {
+                    ESP_LOGI(TAG, "LoadIdleRaw: %s,fread success", files[0].c_str());
+                } else {
+                    heap_caps_free(idle_img_cache);
+                    idle_img_cache = nullptr;
+                    ESP_LOGE(TAG, "LoadIdleRaw: %s,fread failed", files[0].c_str());
+                }
             }else{
-                ESP_LOGE(TAG, "LoadIdleRaw: %s, failed", files[0].c_str());
+                ESP_LOGE(TAG, "LoadIdleRaw: %s,idle_img_cache failed", files[0].c_str());
             }
             fclose(fp);
         }else{
-            ESP_LOGE(TAG, "LoadIdleRaw: %s, failed", files[0].c_str());
+            ESP_LOGE(TAG, "LoadIdleRaw: %s,fopen failed", files[0].c_str());
         }
     }else{        
-        ESP_LOGE(TAG, "LoadIdleRaw: %s, failed", dir.c_str());
+        ESP_LOGE(TAG, "LoadIdleRaw: %s,files.empty failed", dir.c_str());
     }
 }
 
@@ -362,7 +369,7 @@ void SpiLcdAnimDisplay::SetupUI() {
     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
 
     // LoadFrames();
-    // LoadIdleRaw(std::string("/sdcard/1/standby"));
+    LoadIdleRaw(std::string("/sdcard/1/standby"));
     // ShowIdleImage();
     // SetRoleId(1);
     // SetAnimState("idle");
@@ -395,7 +402,14 @@ void SpiLcdAnimDisplay::SetAnimState(const std::string& state) {
     // } else {
     //     ShowIdleImage();
     // }
-    OnFramesLoaded();
+    if (state == "idle" && idle_img_cache) {
+        lv_async_call([](void* param){
+            SpiLcdAnimDisplay* self = static_cast<SpiLcdAnimDisplay*>(param);
+            self->ShowIdleImage();
+        }, this);
+    } else {
+        OnFramesLoaded();
+    }
     ESP_LOGI(TAG, "SetAnimState: %s", current_state_.c_str());
 }
 
@@ -472,14 +486,19 @@ void SpiLcdAnimDisplay::StopAnim() {
 
 void SpiLcdAnimDisplay::ShowIdleImage() {
     // return;
-    if (!idle_img_cache) return;
-    StopAnim();
+    if (!idle_img_cache)
+    {
+        ESP_LOGE(TAG, "idle_img_cache is NULL");
+        return;
+    }
+    // StopAnim();
     static lv_img_dsc_t img_desc;
     img_desc.header.cf = LV_COLOR_FORMAT_RGB565;
     img_desc.header.w = FRAME_WIDTH;
     img_desc.header.h = FRAME_HEIGHT;
     img_desc.data_size = FRAME_SIZE;
     img_desc.data = idle_img_cache;
+    ESP_LOGI(TAG, "ShowIdleImage: img_desc=%p, data=%p", &img_desc, idle_img_cache);
     lv_img_set_src(anim_img_obj_, &img_desc);
     ESP_LOGI(TAG, "ShowIdleImage: %s", current_state_.c_str());
 }

@@ -890,7 +890,7 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetStatus(Lang::Strings::CONNECTING);
             display->SetEmotion("neutral");
             display->SetChatMessage("system", "");
-            // display->SetAnimState("idle");
+            display->SetAnimState("idle");
             set_backlight(1);
             control_motor(1,100,1);
             break;
