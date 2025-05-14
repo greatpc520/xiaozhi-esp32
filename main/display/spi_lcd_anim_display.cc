@@ -405,7 +405,7 @@ void SpiLcdAnimDisplay::LoadFrames() {
     last_role_id = role_id_;
     // 启动异步任务加载动画帧
     AnimFramesTaskParam* param = new AnimFramesTaskParam{role_id_, this};
-    xTaskCreate(anim_frames_load_task, "anim_load", 8192, param, 5, NULL);
+    xTaskCreate(anim_frames_load_task, "anim_load", 8192, param, 1, NULL);
 }
 
 void SpiLcdAnimDisplay::OnFramesLoaded() {
