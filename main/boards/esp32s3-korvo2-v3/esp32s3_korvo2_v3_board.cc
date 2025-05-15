@@ -66,6 +66,7 @@ private:
             .glitch_ignore_cnt = 7,
             .intr_priority = 0,
             .trans_queue_depth = 0,
+            // .freq_hz = 100000, // 设置I2C频率为400kHz
             .flags = {
                 .enable_internal_pullup = 1,
             },
@@ -137,7 +138,7 @@ private:
         }
         
         
-        xTaskCreate(touchpad_daemon, "tp", 2048, NULL, 5, NULL);
+        xTaskCreate(touchpad_daemon, "tp", 2048, NULL, 2, NULL);
     }
     static void motor_daemon(void *param)
     {
@@ -156,7 +157,7 @@ private:
         ESP_LOGI(TAG, "Init Pcf8574");
         pcf8574_ = new Pcf8574(i2c_bus_, 0x27,io_expander_);
         // pcf8574_->motor_reset();
-        xTaskCreate(motor_daemon, "motor", 2048*2, NULL, 5, NULL);
+        xTaskCreate(motor_daemon, "motor", 2048*2, NULL, 1, NULL);
         // 1开机：亮屏，复位+抬头，倾听动画
         // 2倾听：亮屏，抬头，倾听动画
         // 3说话：亮屏，抬头，说话动画+表情动画
