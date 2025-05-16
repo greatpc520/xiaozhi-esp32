@@ -9,6 +9,8 @@
 #include "font_awesome_symbols.h"
 #include "iot/thing_manager.h"
 #include "assets/lang_config.h"
+// #include "camera_service.h"
+// #include "display/spi_lcd_anim_display.h"
 
 #if CONFIG_USE_AUDIO_PROCESSOR
 #include "afe_audio_processor.h"
@@ -662,9 +664,24 @@ void Application::Start() {
         ResetDecoder();
         PlaySound(Lang::Sounds::P3_SUCCESS);
     }
-    
+    //   CameraService::GetInstance().Init();
+    // 启动实时预览，将摄像头帧显示到屏幕
+    // CameraService::GetInstance().StartPreview([](int w, int h, const uint8_t* buf, size_t len) {
+    //     // 假设主板用的是SpiLcdAnimDisplay
+    //     auto* display = static_cast<SpiLcdAnimDisplay*>(Board::GetInstance().GetDisplay());
+    //     // auto* display = Board::GetInstance().GetDisplay();
+    //     if (display) {
+    //         display->ShowRgb565Frame(buf, w, h); // 你需要在SpiLcdAnimDisplay中实现ShowRgb565Frame
+    //         // vTaskDelay(pdMS_TO_TICKS(40));
+    //         // ESP_LOGI(TAG,  "ShowRgb565Frame");
+    //     }else{
+    //         ESP_LOGE(TAG, "Display is NULL");
+    //     }
+    // });
     // Enter the main event loop
     MainEventLoop();
+
+  
 }
 
 void Application::OnClockTimer() {

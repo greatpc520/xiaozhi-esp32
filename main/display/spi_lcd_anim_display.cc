@@ -13,11 +13,14 @@
 #include <freertos/task.h>
 
 #include "lodepng.h"
+#include "tjpgd.h" // 假设你已集成tjpgd库
 static uint8_t *rgb565a8_data = (uint8_t *)heap_caps_malloc(240 * 240 * 3, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 // uint16_t *rgb565_data = (uint16_t *)heap_caps_malloc(240 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 static uint8_t *httpbuffer = NULL; //(uint8_t *)heap_caps_malloc(240 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 static size_t image_buffer_size = 0;
 #include "esp_http_client.h"
+
+#include "camera_service.h"
 
 #define TAG "SpiLcdAnimDisplay"
 
@@ -375,6 +378,7 @@ void SpiLcdAnimDisplay::SetupUI() {
     // SetAnimState("idle");
     
     ESP_LOGI(TAG, "SetupUI: %s", current_state_.c_str());
+    // StartFrameQueueTask();
 }
 
 void SpiLcdAnimDisplay::SetRoleId(int role_id) {
@@ -382,12 +386,19 @@ void SpiLcdAnimDisplay::SetRoleId(int role_id) {
     ESP_LOGI(TAG, "SetRoleId: %d", role_id);
     role_id_ = role_id;
     LoadFrames();
-    // SetAnimState("idle");
+    SetAnimState("idle");
 
 }
 
 void SpiLcdAnimDisplay::SetAnimState(const std::string& state) {
-   
+    // static uint32_t last_change_time = 0;
+    // uint32_t now = lv_tick_get();
+    // if (state == current_state_ && state !="idle") return;
+    // if (state == current_state_ && (now - last_change_time) < 1000) {
+    //     // 状态相同且小于1秒，不执行
+    //     return;
+    // }
+    // last_change_time = now;
     if (state == current_state_) return;
     // StopAnim();
     current_state_ = state;
@@ -423,6 +434,7 @@ void SpiLcdAnimDisplay::LoadFrames() {
 }
 
 void SpiLcdAnimDisplay::OnFramesLoaded() {
+    // return;
     // LVGL主线程回调，加载完成后重启动画或显示idle
     if (current_state_ == "speak" && speak_anim_cache_count > 0) {
         frame_count_ = speak_anim_cache_count;
@@ -849,4 +861,204 @@ void SpiLcdAnimDisplay::SetEmotion(const char *emotion)
             free(params);
         }
     }
+}
+
+void SpiLcdAnimDisplay::ShowRgb565Frame(const uint8_t* buf, int w, int h) {
+    EnqueueFrame(buf, w, h);
+}
+
+void SpiLcdAnimDisplay::EnqueueFrame(const uint8_t* buf, int w, int h) {
+    if (!frame_queue_) return;
+    CameraFrame frame;
+    frame.w = w;
+    frame.h = h;
+    frame.buf = (uint8_t*)heap_caps_malloc(w * h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!frame.buf) return;
+    memcpy(frame.buf, buf, w * h * 2);
+    // 若队列满，丢弃最旧帧
+    if (xQueueSend(frame_queue_, &frame, 0) != pdTRUE) {
+        CameraFrame old;
+        if (xQueueReceive(frame_queue_, &old, 0) == pdTRUE) {
+            if (old.buf) heap_caps_free(old.buf);
+        }
+        xQueueSend(frame_queue_, &frame, 0);
+    }
+}
+// 交换每个像素的高低字节
+void swap_rgb565_bytes(uint8_t* buf, size_t len) {
+    for (size_t i = 0; i + 1 < len; i += 2) {
+        uint8_t tmp = buf[i];
+        buf[i] = buf[i + 1];
+        buf[i + 1] = tmp;
+    }
+}
+void SpiLcdAnimDisplay::StartFrameQueueTask() {
+    if (!frame_queue_) {
+        frame_queue_ = xQueueCreate(2, sizeof(CameraFrame)); // 最多缓存2帧
+    }
+    if (!frame_task_handle_) {
+        xTaskCreate([](void* arg) {
+            SpiLcdAnimDisplay* self = (SpiLcdAnimDisplay*)arg;
+            CameraFrame frame;
+            while (1) {
+                if (xQueueReceive(self->frame_queue_, &frame, portMAX_DELAY) == pdTRUE) {
+                    ESP_LOGI(TAG, "ShowRgb565Frame: 收到RGB565数据，宽度=%d，高度=%d", frame.w, frame.h);
+                    if (self->emotion_label_img && frame.buf) {
+                        // 结构体用于传递参数到lv_async_call
+                        struct LvglRgb565Param {
+                            SpiLcdAnimDisplay* self;
+                            uint8_t* buf;
+                            int w;
+                            int h;
+                        };
+                        auto* param = new LvglRgb565Param{self, frame.buf, frame.w, frame.h};
+                        lv_async_call([](void* user_data){
+                            auto* p = (LvglRgb565Param*)user_data;
+                            swap_rgb565_bytes((uint8_t*)p->buf, p->w * p->h * 2);
+                            static lv_img_dsc_t img_dsc;
+                            img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+                            img_dsc.header.w = p->w;
+                            img_dsc.header.h = p->h;
+                            img_dsc.data_size = p->w * p->h * 2;
+                            img_dsc.data = p->buf;
+                            if (p->self->emotion_label_img) {
+                                lv_img_set_src(p->self->anim_img_obj_, &img_dsc);
+                                // lv_img_set_src(p->self->emotion_label_img, &img_dsc);
+                                // lv_obj_set_size(p->self->emotion_label_img, p->w, p->h);
+                                // lv_obj_set_pos(p->self->emotion_label_img, 0, 0);
+
+                                ESP_LOGI(TAG, "ShowRgb565Frame: 显示图片");
+                                // vTaskDelay(pdMS_TO_TICKS(3000));
+                                // 将图片对象内容置空并隐藏，释放资源
+                                // lv_img_set_src(p->self->emotion_label_img, NULL);
+                                // lv_obj_add_flag(p->self->emotion_label_img, LV_OBJ_FLAG_HIDDEN);
+                                // lv_obj_clear_flag(p->self->emotion_label_img, LV_OBJ_FLAG_HIDDEN);
+                                
+                            }
+                            heap_caps_free(p->buf);
+                            delete p;
+                        }, param);
+                    // self->StopFrameQueueTask();
+                    // 退出任务
+                    vTaskDelete(NULL);
+                    } else {
+                        if (frame.buf) heap_caps_free(frame.buf);
+                    }
+                }
+            }
+        }, "lcd_frame_task", 4096, this, 1, &frame_task_handle_);
+    }
+}
+
+void SpiLcdAnimDisplay::StopFrameQueueTask() {
+    if (frame_task_handle_) {
+        vTaskDelete(frame_task_handle_);
+        frame_task_handle_ = nullptr;
+    }
+    if (frame_queue_) {
+        CameraFrame frame;
+        while (xQueueReceive(frame_queue_, &frame, 0) == pdTRUE) {
+            if (frame.buf) heap_caps_free(frame.buf);
+        }
+        vQueueDelete(frame_queue_);
+        frame_queue_ = nullptr;
+    }
+}
+
+// JPEG解码回调上下文结构体
+struct JpegIoContext {
+    const uint8_t* jpg;
+    size_t len;
+    size_t pos;
+    uint8_t* buf;
+    int w, h;
+};
+
+static UINT tjpgd_input_func(JDEC* jd, BYTE* buff, UINT nbyte) {
+    JpegIoContext* io = (JpegIoContext*)jd->device;
+    if (io->pos + nbyte > io->len) nbyte = io->len - io->pos;
+    if (buff && nbyte) memcpy(buff, io->jpg + io->pos, nbyte);
+    io->pos += nbyte;
+    return nbyte;
+}
+
+static UINT tjpgd_output_func(JDEC* jd, void* bitmap, JRECT* rect) {
+    JpegIoContext* io = (JpegIoContext*)jd->device;
+    int w = rect->right - rect->left + 1;
+    int h = rect->bottom - rect->top + 1;
+    for (int y = 0; y < h; ++y) {
+        memcpy(io->buf + ((rect->top + y) * io->w + rect->left) * 2,
+               (uint8_t*)bitmap + y * w * 2, w * 2);
+    }
+    return 1;
+}
+
+void SpiLcdAnimDisplay::ShowJpeg(const uint8_t* jpg, size_t len) {
+    ESP_LOGI(TAG, "ShowJpeg: 收到JPEG数据，长度=%d", (int)len);
+    JDEC jd;
+    void* work = heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    JpegIoContext io = { jpg, len, 0, nullptr, 0, 0 };
+    JRESULT res = jd_prepare(&jd, tjpgd_input_func, work, 4096, &io);
+    if (res != JDR_OK) {
+        ESP_LOGE(TAG, "ShowJpeg: jd_prepare失败: %d", res);
+        heap_caps_free(work);
+        return;
+    }
+    int w = jd.width, h = jd.height;
+    ESP_LOGI(TAG, "解码JPEG尺寸: %d x %d", w, h);
+    static uint8_t* rgb565_buf = (uint8_t*)heap_caps_malloc(w * h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!rgb565_buf) {
+        ESP_LOGE(TAG, "ShowJpeg: 分配RGB565缓冲区失败");
+        heap_caps_free(work);
+        return;
+    }
+    io.buf = rgb565_buf;
+    io.w = w;
+    io.h = h;
+    res = jd_decomp(&jd, tjpgd_output_func, 0);
+    heap_caps_free(work);
+    if (res != JDR_OK) {
+        ESP_LOGE(TAG, "ShowJpeg: jd_decomp失败: %d", res);
+        heap_caps_free(rgb565_buf);
+        return;
+    }
+    swap_rgb565_bytes(rgb565_buf, w * h * 2);
+    static lv_img_dsc_t img_dsc;
+    img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    img_dsc.header.w = w;
+    img_dsc.header.h = h;
+    img_dsc.data_size = w * h * 2;
+    // ESP_LOGI(TAG, "ShowJpeg: 图片大小=%d*%d", w, h);
+    img_dsc.data = rgb565_buf;
+    if (anim_img_obj_) {
+        DisplayLockGuard lock(this);
+        lv_img_set_src(anim_img_obj_, &img_dsc);
+    }
+    // 不要立即释放 rgb565_buf
+    // heap_caps_free(rgb565_buf);
+}
+
+void SpiLcdAnimDisplay::ShowRgb565(const uint8_t* buf, int w, int h) {
+    if (!buf || !anim_img_obj_) return;
+    // 分配一块缓冲区用于显示
+    static uint8_t* rgb565_buf = (uint8_t*)heap_caps_malloc(w * h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!rgb565_buf) return;
+    memcpy(rgb565_buf, buf, w * h * 2);
+    swap_rgb565_bytes(rgb565_buf, w * h * 2);
+    static lv_img_dsc_t img_dsc;
+    img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    img_dsc.header.w = w;
+    img_dsc.header.h = h;
+    img_dsc.data_size = w * h * 2;
+    img_dsc.data = rgb565_buf;
+    {
+        DisplayLockGuard lock(this);
+        lv_img_set_src(anim_img_obj_, &img_dsc);
+    }
+    // heap_caps_free(rgb565_buf);
+}
+
+void SpiLcdAnimDisplay::CaptureAndShowPhoto() {
+    DisplayLockGuard lock(this);
+    CameraService::GetInstance().ShowPhotoToLvgl(anim_img_obj_);
 }

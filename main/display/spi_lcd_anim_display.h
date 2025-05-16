@@ -5,6 +5,13 @@
 #include <vector>
 #include <string>
 #include <lvgl.h>
+#include <freertos/queue.h>
+
+struct CameraFrame {
+    uint8_t* buf;
+    int w;
+    int h;
+};
 
 // SPI LCD 动画显示器，支持角色ID切换，三种状态动画，.raw图片，lv_anim_t动画
 class SpiLcdAnimDisplay : public SpiLcdDisplay {
@@ -25,6 +32,17 @@ public:
 
     void OnFramesLoaded();
 
+    void ShowRgb565(const uint8_t* buf, int w, int h);
+    void ShowJpeg(const uint8_t* jpg, size_t len);
+    void ShowRgb565Frame(const uint8_t* buf, int w, int h);
+
+    void StartFrameQueueTask();
+    void StopFrameQueueTask();
+    void EnqueueFrame(const uint8_t* buf, int w, int h);
+
+    // 拍照并显示到动画图片对象
+    void CaptureAndShowPhoto();
+
 protected:
     int role_id_ = 0;
     std::vector<std::string> speak_frames_;
@@ -36,6 +54,9 @@ protected:
     int current_frame_idx_ = 0;
     int frame_count_ = 0;
     int anim_fps_ = 8;
+
+    QueueHandle_t frame_queue_ = nullptr;
+    TaskHandle_t frame_task_handle_ = nullptr;
 
     void LoadFrames();
     void StartAnim();

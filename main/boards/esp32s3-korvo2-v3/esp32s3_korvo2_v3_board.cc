@@ -18,7 +18,8 @@
 #include "pcf8574.h"
 #include "file_manager.h"
 
-
+#include "camera_service.h"
+#include "display/spi_lcd_anim_display.h"
 #define TAG "esp32s3_korvo2_v3"
 
 LV_FONT_DECLARE(font_puhui_20_4);
@@ -138,7 +139,7 @@ private:
         }
         
         
-        xTaskCreate(touchpad_daemon, "tp", 2048, NULL, 2, NULL);
+        xTaskCreate(touchpad_daemon, "tp", 2048, NULL, 9, NULL);
     }
     static void motor_daemon(void *param)
     {
@@ -341,6 +342,40 @@ private:
         // ESP_LOGI(TAG, "Initializing esp32s3_korvo2_v3 Board");
         // #elif CONFIG_IDF_TARGET_ESP32P4
     }
+    void init_camera()
+    {
+    //   CameraService::GetInstance().Init();
+    // 启动实时预览，将摄像头帧显示到屏幕
+    // CameraService::GetInstance().StartPreview([](int w, int h, const uint8_t* buf, size_t len) {
+    //     // 假设主板用的是SpiLcdAnimDisplay
+    //     // auto* display = static_cast<SpiLcdAnimDisplay*>(Board::GetInstance().GetDisplay());
+    //     if (display) {
+    //         display_->ShowRgb565Frame(buf, w, h); // 你需要在SpiLcdAnimDisplay中实现ShowRgb565Frame
+    //         // vTaskDelay(pdMS_TO_TICKS(40));
+    //         // ESP_LOGI(TAG,  "ShowRgb565Frame");
+    //     }else{
+    //         ESP_LOGE(TAG, "Display is NULL");
+    //     }
+    // });
+
+    
+   int w = 0, h = 0;
+    size_t buf_size = 240 * 240 * 2;
+    static uint8_t* buf = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (CameraService::GetInstance().TakePhotoRgb565ToBuffer(buf, buf_size, w, h)) {
+        static_cast<SpiLcdAnimDisplay*>(display_)->ShowRgb565(buf, w, h);
+    }
+    // heap_caps_free(buf);
+
+// 传入LVGL图片控件指针，自动拍照、JPEG转RGB888并显示    
+    // if (display_) {
+    //     auto* anim_display = static_cast<SpiLcdAnimDisplay*>(display_);
+    //     if (anim_display) {
+    //         anim_display->CaptureAndShowPhoto();
+    //     }
+    // }
+    
+    }
 
 public:
     Esp32S3Korvo2V3Board() : boot_button_(BOOT_BUTTON_GPIO) {
@@ -359,6 +394,7 @@ public:
         InitializeSt7789Display(); 
         #endif
         InitializeIot();
+        init_camera();
     }
 
     virtual AudioCodec* GetAudioCodec() override {
