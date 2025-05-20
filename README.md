@@ -1,5 +1,6 @@
 # 小智 AI 聊天机器人 （XiaoZhi AI Chatbot）
 git push xiaozhiesp32s3 main
+   git push xiaozhiesp32s3 refs/heads/main:refs/heads/main
 （中文 | [English](README_en.md) | [日本語](README_ja.md)）
 
 ## 视频介绍
