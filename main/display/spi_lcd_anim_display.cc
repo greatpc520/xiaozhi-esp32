@@ -414,13 +414,21 @@ void SpiLcdAnimDisplay::SetAnimState(const std::string& state) {
     //     ShowIdleImage();
     // }
     if (state == "idle" && idle_img_cache) {
-        lv_async_call([](void* param){
-            SpiLcdAnimDisplay* self = static_cast<SpiLcdAnimDisplay*>(param);
-            self->ShowIdleImage();
-        }, this);
+        // lv_async_call([](void* param){
+        //     SpiLcdAnimDisplay* self = static_cast<SpiLcdAnimDisplay*>(param);
+        //     self->ShowIdleImage();
+        // }, this);
     } else {
-        OnFramesLoaded();
+        // OnFramesLoaded();
+                xTaskCreate([](void* param){
+            SpiLcdAnimDisplay* self = static_cast<SpiLcdAnimDisplay*>(param);
+            if (self) {
+                self->OnFramesLoaded();
+            }
+            vTaskDelete(NULL);
+        }, "on_frames_loaded", 4096, this, 1, NULL);
     }
+    
     ESP_LOGI(TAG, "SetAnimState: %s", current_state_.c_str());
 }
 

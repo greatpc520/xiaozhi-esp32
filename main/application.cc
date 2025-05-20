@@ -23,6 +23,7 @@
 #include <cJSON.h>
 #include <driver/gpio.h>
 #include <arpa/inet.h>
+#include "esp_task_wdt.h"
 
 #define TAG "Application"
 
@@ -53,15 +54,24 @@ void set_backlight(uint8_t brightness)
 }
 void control_motor(uint8_t motorid, int steps, bool direction)
 {
-    // return;
-    static bool isup=true;
-    if(direction && isup) return;
-    if(direction==false && isup==false) return;
-    isup=direction;
+    static bool isup = true;
+    static std::mutex motor_mutex;
+    
+    {
+        std::lock_guard<std::mutex> lock(motor_mutex);
+        if(direction && isup) return;
+        if(direction == false && isup == false) return;
+        isup = direction;
+    }
+    
     auto& board = Board::GetInstance();
     auto motor = board.SetMotor();
-    // motor->setbl((uint8_t)direction);
-    motor->control_motor(motorid, steps, direction);
+    
+    // 创建新线程执行电机控制
+    std::thread motor_thread([motor, motorid, steps, direction]() {
+        motor->control_motor(motorid, steps, direction);
+    });
+    motor_thread.detach();
    
 }
 Application::Application() {
@@ -303,7 +313,7 @@ void Application::ToggleChatState() {
         return;
     }
 
-    if (device_state_ == kDeviceStateIdle) {
+        if (device_state_ == kDeviceStateIdle) {
         Schedule([this]() {
             SetDeviceState(kDeviceStateConnecting);
             if (!protocol_->OpenAudioChannel()) {
@@ -458,6 +468,10 @@ void Application::Start() {
         if (thing_manager.GetStatesJson(states, false)) {
             protocol_->SendIotStates(states);
         }
+        // 设置聊天状态
+       ToggleChatState();
+         // Set the chat state to wake word detected
+        protocol_->SendWakeWordDetected("你好");
     });
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveMode(true);
@@ -723,6 +737,8 @@ void Application::Schedule(std::function<void()> callback) {
 // If other tasks need to access the websocket or chat state,
 // they should use Schedule to call this function
 void Application::MainEventLoop() {
+    // 注册当前任务到 WDT
+    // esp_task_wdt_add(NULL); // NULL 表示当前任务
     while (true) {
         auto bits = xEventGroupWaitBits(event_group_, SCHEDULE_EVENT, pdTRUE, pdFALSE, portMAX_DELAY);
 
@@ -734,6 +750,8 @@ void Application::MainEventLoop() {
                 task();
             }
         }
+        // esp_task_wdt_reset();
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 

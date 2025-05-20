@@ -143,13 +143,15 @@ private:
     }
     static void motor_daemon(void *param)
     {
-        vTaskDelay(pdMS_TO_TICKS(3500));
+        vTaskDelay(pdMS_TO_TICKS(3800));
         auto &board = (Esp32S3Korvo2V3Board &)Board::GetInstance();
         auto motor = board.SetMotor();
         
         motor->motor_reset();//step_test();
         // motor->control_motor(1, 100, 0);
         Application::GetInstance().ToggleChatState();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        Application::GetInstance().GetProtocol()->SendWakeWordDetected("你好");
         vTaskDelete(NULL);
     }
 
@@ -394,7 +396,7 @@ public:
         InitializeSt7789Display(); 
         #endif
         InitializeIot();
-        init_camera();
+        // init_camera();
     }
 
     virtual AudioCodec* GetAudioCodec() override {

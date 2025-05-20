@@ -49,6 +49,7 @@ void BackgroundTask::WaitForCompletion() {
 
 void BackgroundTask::BackgroundTaskLoop() {
     ESP_LOGI(TAG, "background_task started");
+    // esp_task_wdt_add(NULL);
     while (true) {
         std::unique_lock<std::mutex> lock(mutex_);
         condition_variable_.wait(lock, [this]() { return !main_tasks_.empty(); });
@@ -59,5 +60,7 @@ void BackgroundTask::BackgroundTaskLoop() {
         for (auto& task : tasks) {
             task();
         }
+        // esp_task_wdt_reset();
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }

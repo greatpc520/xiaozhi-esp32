@@ -11,7 +11,9 @@
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <cstring>
-
+#include <dirent.h>
+#include <fstream>
+#include "application.h"
 // #include "boards/esp32s3-korvo2-v3/config.h"
 typedef enum {
     LIGHT_MODE_CHARGING_BREATH = 0,
@@ -27,7 +29,72 @@ typedef enum {
 } light_mode_t;
 
 #define TAG "Chassis"
+#define MOUNT_POINT "/sdcard"
+#define AUDIO_FILE_EXTENSION ".p3"
 
+void PlayMusic(int file_number)
+    {
+      // 挂载 SD 卡文件系统
+    //   bsp_sdcard_mount();
+      DIR *dir = opendir(MOUNT_POINT);
+      if (dir == NULL)
+      {
+        ESP_LOGE(TAG, "Failed to open directory: %s", MOUNT_POINT);
+        return;
+      }
+      struct dirent *entry;
+      std::vector<std::string> audio_files; // 用来存储符合条件的音频文件
+      // 遍历目录中的文件
+      while ((entry = readdir(dir)) != NULL)
+      {
+        // 只处理扩展名为 .p3 的文件
+        if (strstr(entry->d_name, AUDIO_FILE_EXTENSION))
+        {
+          audio_files.push_back(entry->d_name); // 将符合条件的文件存入容器
+        }
+      }
+      ESP_LOGE(TAG, " file number: %d", audio_files.size());
+      closedir(dir);
+      if (audio_files.empty())
+      {
+        ESP_LOGE(TAG, "No valid audio file found.");
+        return;
+      }
+      // 判断文件序号是否有效
+      if (file_number < 0 || file_number >= audio_files.size())
+      {
+        ESP_LOGE(TAG, "Invalid file number: %d", file_number);
+        return;
+      }
+      // 根据 file_number 获取文件路径
+      char file_path[512];
+      snprintf(file_path, sizeof(file_path), "%s/%s", MOUNT_POINT, audio_files[file_number].c_str());
+      auto &app = Application::GetInstance();
+      auto codec = Board::GetInstance().GetAudioCodec();
+      ESP_LOGI(TAG, "Playing file: %s", file_path);
+      // 尝试打开文件
+      std::ifstream file(file_path, std::ios::binary);
+      if (!file.is_open())
+      {
+        ESP_LOGE(TAG, "Failed to open file: %s", file_path);
+        return;
+      }
+      // 获取文件大小并读取文件内容
+      file.seekg(0, std::ios::end);
+      size_t size = file.tellg();
+      file.seekg(0, std::ios::beg);
+      std::vector<char> file_data(size);
+      file.read(file_data.data(), size);
+      if (!file)
+      {
+        ESP_LOGE(TAG, "Failed to read the entire file: %s", file_path);
+        return;
+      }
+      // 读取并播放声音
+      std::string_view sound_view(file_data.data(), file_data.size());
+      app.PlaySound(sound_view);
+      ESP_LOGI(TAG, "File %s played successfully", file_path);
+    }
 namespace iot {
 
 class Chassis : public Thing {

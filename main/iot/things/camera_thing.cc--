@@ -1,0 +1,43 @@
+#include "iot/thing.h"
+#include "camera_service.h"
+#include "board.h"
+#include "display/spi_lcd_anim_display.h"
+#include <vector>
+
+namespace iot {
+
+class CameraThing : public Thing {
+public:
+    CameraThing() : Thing("Camera", "摄像头：支持远程拍照和预览并显示") {
+        methods_.AddMethod("TakePhoto", "拍照并显示", ParameterList(), [this](const ParameterList& parameters) {
+            CameraService::GetInstance().StopPreview();
+            std::vector<uint8_t> jpg_data;
+            if (CameraService::GetInstance().TakePhoto(jpg_data)) {
+                auto* display = static_cast<SpiLcdAnimDisplay*>(Board::GetInstance().GetDisplay());
+                if (display) {
+                    display->ShowJpeg(jpg_data.data(), jpg_data.size());
+                }
+                // 如需上传图片，可在此处补充上传逻辑
+            }
+        });
+        methods_.AddMethod("StartPreview", "预览并显示", ParameterList(), [this](const ParameterList& parameters) {
+            CameraService::GetInstance().StartPreview([](int w, int h, const uint8_t* buf, size_t len) {
+                auto* display = static_cast<SpiLcdAnimDisplay*>(Board::GetInstance().GetDisplay());
+                if (display) {
+                    display->ShowRgb565Frame(buf, w, h);
+                }
+            });
+        });
+        methods_.AddMethod("StopPreview", "停止预览", ParameterList(), [this](const ParameterList& parameters) {
+            CameraService::GetInstance().StopPreview();
+        });
+        // methods_.AddMethod("SetFrameSize", "设置预览分辨率", ParameterList(), [this](const ParameterList& parameters) {
+        //     int frame_size = parameters.GetInt("frame_size");
+        //     CameraService::GetInstance().SetFrameSize(frame_size);
+        // });
+    }
+};
+
+} // namespace iot
+
+DECLARE_THING(CameraThing); 
