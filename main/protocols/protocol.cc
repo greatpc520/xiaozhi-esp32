@@ -1,6 +1,7 @@
 #include "protocol.h"
 
 #include <esp_log.h>
+#include <mbedtls/base64.h>
 
 #define TAG "Protocol"
 
@@ -108,6 +109,47 @@ void Protocol::SendIotDescriptors(const std::string& descriptors) {
     }
 
     cJSON_Delete(root);
+}
+
+void Protocol::SendIotCameraPhoto(const std::vector<uint8_t>& photo_data, int width, int height, const std::string& format) {
+    if (photo_data.empty()) {
+        ESP_LOGE(TAG, "照片数据为空，无法发送");
+        return;
+    }
+
+    // 计算Base64编码后的大小
+    size_t base64_len;
+    mbedtls_base64_encode(nullptr, 0, &base64_len, photo_data.data(), photo_data.size());
+    
+    // 分配内存
+    unsigned char* base64_buf = new unsigned char[base64_len];
+    if (base64_buf == nullptr) {
+        ESP_LOGE(TAG, "无法分配内存进行Base64编码");
+        return;
+    }
+    
+    // 执行Base64编码
+    int ret = mbedtls_base64_encode(base64_buf, base64_len, &base64_len, photo_data.data(), photo_data.size());
+    if (ret != 0) {
+        ESP_LOGE(TAG, "Base64编码失败: %d", ret);
+        delete[] base64_buf;
+        return;
+    }
+    
+    // 构建JSON消息
+    std::string message = "{\"session_id\":\"" + session_id_ + "\",\"type\":\"iot\",\"update\":true,\"camera_photo\":{";
+    message += "\"width\":" + std::to_string(width) + ",";
+    message += "\"height\":" + std::to_string(height) + ",";
+    message += "\"format\":\"" + format + "\",";
+    message += "\"data\":\"" + std::string(reinterpret_cast<char*>(base64_buf), base64_len) + "\"";
+    message += "}}";
+    
+    // 释放内存
+    delete[] base64_buf;
+    
+    // 发送消息
+    ESP_LOGI(TAG, "正在发送照片数据到服务器，大小: %zu 字节", photo_data.size());
+    SendText(message);
 }
 
 void Protocol::SendIotStates(const std::string& states) {

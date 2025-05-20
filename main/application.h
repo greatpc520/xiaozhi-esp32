@@ -75,6 +75,7 @@ public:
     // 获取协议对象
     Protocol* GetProtocol() { return protocol_.get(); }
     
+    Protocol& GetProtocol() { return *protocol_; }
 
 private:
     Application();
