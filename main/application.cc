@@ -469,9 +469,9 @@ void Application::Start() {
             protocol_->SendIotStates(states);
         }
         // 设置聊天状态
-       ToggleChatState();
+    //    ToggleChatState();
          // Set the chat state to wake word detected
-        protocol_->SendWakeWordDetected("你好");
+        // protocol_->SendWakeWordDetected("你好");
     });
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveMode(true);

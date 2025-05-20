@@ -483,6 +483,7 @@ static void anim_exec_cb(void* obj, int32_t frame) {
 void SpiLcdAnimDisplay::StartAnim() {
     if (frame_count_ <= 0) return;
     StopAnim();
+    vTaskDelay(pdMS_TO_TICKS(100));
     // lv_anim_init(&anim_);
     // lv_anim_set_var(&anim_, anim_img_obj_);
     lv_obj_set_user_data(anim_img_obj_, this);
