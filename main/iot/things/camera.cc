@@ -204,7 +204,7 @@ private:
                  sensor->status.framesize ? sensor->status.framesize : 0);
         
         // 设置摄像头参数
-        sensor->set_framesize(sensor, FRAMESIZE_QVGA);  // 320x240
+        sensor->set_framesize(sensor, FRAMESIZE_240X240);  // 320x240
         sensor->set_pixformat(sensor, PIXFORMAT_RGB565);
         
         camera_running = true;
@@ -380,7 +380,8 @@ public:
             
             // 摄像头已经在板级初始化中配置好，直接启动任务即可
             ESP_LOGI(TAG, "开始打开摄像机");
-            
+            auto display = Board::GetInstance().GetDisplay();
+            display->SetAnimState("cam");
             // 启动摄像头与LCD - 实时显示摄像头图像
             start_camera_lcd();
         });
@@ -404,6 +405,7 @@ public:
             ESP_LOGI(TAG, "开始拍照");
             
             auto display = Board::GetInstance().GetDisplay();
+            display->SetAnimState("cam");
             camera_fb_t *frame = NULL;
             
             if (camera_running) {
@@ -473,7 +475,7 @@ public:
                 }
                 
                 // 设置摄像头参数
-                sensor->set_framesize(sensor, FRAMESIZE_QVGA);  // 320x240
+                sensor->set_framesize(sensor, FRAMESIZE_240X240);  // 320x240
                 sensor->set_pixformat(sensor, PIXFORMAT_RGB565);
                 
                 // 启动摄像头并等待稳定
