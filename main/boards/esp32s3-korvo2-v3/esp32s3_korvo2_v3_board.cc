@@ -155,9 +155,14 @@ private:
         motor->motor_reset();//step_test();
         // motor->control_motor(1, 100, 0);
         Application::GetInstance().ToggleChatState();
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        Application::GetInstance().GetProtocol().SendWakeWordDetected("你好");
-       
+        auto protocol = Application::GetInstance().GetProtocolPtr();
+        if (protocol) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            protocol->SendWakeWordDetected("你好");
+        } else {
+            ESP_LOGE(TAG, "Protocol not initialized");
+        }
+         vTaskDelay(pdMS_TO_TICKS(10));
         vTaskDelete(NULL);
     }
 
