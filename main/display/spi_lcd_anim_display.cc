@@ -420,13 +420,18 @@ void SpiLcdAnimDisplay::SetAnimState(const std::string& state) {
         // }, this);
     } else {
         // OnFramesLoaded();
-                xTaskCreate([](void* param){
+        //         xTaskCreate([](void* param){
+        //     SpiLcdAnimDisplay* self = static_cast<SpiLcdAnimDisplay*>(param);
+        //     if (self) {
+        //         self->OnFramesLoaded();
+        //     }
+        //     vTaskDelete(NULL);
+        // }, "on_frames_loaded", 4096, this, 1, NULL);
+        // 正确做法：用 lv_async_call 让 OnFramesLoaded 在 LVGL 线程执行
+        lv_async_call([](void* param){
             SpiLcdAnimDisplay* self = static_cast<SpiLcdAnimDisplay*>(param);
-            if (self) {
-                self->OnFramesLoaded();
-            }
-            vTaskDelete(NULL);
-        }, "on_frames_loaded", 4096, this, 1, NULL);
+            if (self) self->OnFramesLoaded();
+        }, this);
     }
     
     ESP_LOGI(TAG, "SetAnimState: %s", current_state_.c_str());

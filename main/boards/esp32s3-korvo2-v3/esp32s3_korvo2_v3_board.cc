@@ -210,7 +210,7 @@ private:
         // 配置IO0-IO3为输出模式
         ESP_ERROR_CHECK(esp_io_expander_set_dir(io_expander_, 
             IO_EXPANDER_PIN_NUM_0 | IO_EXPANDER_PIN_NUM_1 | 
-            IO_EXPANDER_PIN_NUM_2 | IO_EXPANDER_PIN_NUM_3, 
+            IO_EXPANDER_PIN_NUM_2 | IO_EXPANDER_PIN_NUM_3  | IO_EXPANDER_PIN_NUM_7, 
             IO_EXPANDER_OUTPUT));
 
         // 复位LCD和TouchPad
@@ -453,7 +453,7 @@ public:
         #else
         InitializeSt7789Display(); 
         #endif
-        InitializeCamera();
+        // InitializeCamera();
         InitializeIot();
         
     }

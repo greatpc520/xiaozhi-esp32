@@ -14,19 +14,20 @@
 #include <dirent.h>
 #include <fstream>
 #include "application.h"
+   #include <esp_system.h>
 // #include "boards/esp32s3-korvo2-v3/config.h"
-typedef enum {
-    LIGHT_MODE_CHARGING_BREATH = 0,
-    LIGHT_MODE_POWER_LOW,
-    LIGHT_MODE_ALWAYS_ON,
-    LIGHT_MODE_BLINK,
-    LIGHT_MODE_WHITE_BREATH_SLOW,
-    LIGHT_MODE_WHITE_BREATH_FAST,
-    LIGHT_MODE_FLOWING,
-    LIGHT_MODE_SHOW,
-    LIGHT_MODE_SLEEP,
-    LIGHT_MODE_MAX
-} light_mode_t;
+// typedef enum {
+//     LIGHT_MODE_CHARGING_BREATH = 0,
+//     LIGHT_MODE_POWER_LOW,
+//     LIGHT_MODE_ALWAYS_ON,
+//     LIGHT_MODE_BLINK,
+//     LIGHT_MODE_WHITE_BREATH_SLOW,
+//     LIGHT_MODE_WHITE_BREATH_FAST,
+//     LIGHT_MODE_FLOWING,
+//     LIGHT_MODE_SHOW,
+//     LIGHT_MODE_SLEEP,
+//     LIGHT_MODE_MAX
+// } light_mode_t;
 
 #define TAG "Chassis"
 #define MOUNT_POINT "/sdcard"
@@ -99,7 +100,7 @@ namespace iot {
 
 class Chassis : public Thing {
 private:
-    light_mode_t light_mode_ = LIGHT_MODE_ALWAYS_ON;
+    // light_mode_t light_mode_ = LIGHT_MODE_ALWAYS_ON;
     void set_backlight(uint8_t brightness)
     {
         auto& board = Board::GetInstance();
@@ -160,7 +161,7 @@ void SendUartMessage(const char * command_str) {
 */
 
 public:
-    Chassis() : Thing("Chassis", "终端：有云台可以上下左右旋转；可以开关屏幕；开关指示灯；可以重复操作"), light_mode_(LIGHT_MODE_ALWAYS_ON) {
+    Chassis() : Thing("Chassis", "终端：有云台可以上下左右旋转；可以开关屏幕；开关指示灯；可以重复操作"){
         // InitializeEchoUart();
 
         // 定义设备的属性
@@ -172,7 +173,7 @@ public:
 
         
 
-        methods_.AddMethod("reset", "复位终端", ParameterList(), [this](const ParameterList& parameters) {
+        methods_.AddMethod("motorReset", "复位终端", ParameterList(), [this](const ParameterList& parameters) {
             printf("control_motor reset.\r\n");
         control_motor(0,343,0);control_motor(0,171,1);
         control_motor(1,200,0);control_motor(1,100,1);
@@ -215,6 +216,9 @@ public:
 
         methods_.AddMethod("TurnOff", "关闭灯", ParameterList(), [this](const ParameterList& parameters) {
                         set_led(1);
+        });
+        methods_.AddMethod("sysReset", "系统重启", ParameterList(), [this](const ParameterList& parameters) {
+                      esp_restart();
         });
 /*
         methods_.AddMethod("Dance", "跳舞", ParameterList(), [this](const ParameterList& parameters) {

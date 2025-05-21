@@ -34,11 +34,6 @@ public:
     virtual void DrawImageOnCanvas(int x, int y, int width, int height, const uint8_t* img_data);
     virtual bool HasCanvas() const { return canvas_ != nullptr; }
 
-    // 画布相关方法 - 用于在UI顶层显示图片
-    virtual void CreateCanvas();
-    virtual void DestroyCanvas();
-    virtual void DrawImageOnCanvas(int x, int y, int width, int height, const uint8_t* img_data);
-    virtual bool HasCanvas() const { return canvas_ != nullptr; }
 
     inline int width() const { return width_; }
     inline int height() const { return height_; }
@@ -65,10 +60,7 @@ protected:
     // 画布对象 - 用于在顶层显示图片
     lv_obj_t* canvas_ = nullptr;
     void* canvas_buffer_ = nullptr;
-    
-    // 画布对象 - 用于在顶层显示图片
-    lv_obj_t* canvas_ = nullptr;
-    void* canvas_buffer_ = nullptr;
+ 
     
     const char* battery_icon_ = nullptr;
     const char* network_icon_ = nullptr;

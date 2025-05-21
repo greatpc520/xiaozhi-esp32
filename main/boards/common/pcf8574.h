@@ -66,6 +66,8 @@ public:
 
      void setled(uint8_t level )
     {
+        // 先设置为输出模式
+    esp_io_expander_set_dir(io_expander_, IO_EXPANDER_PIN_NUM_7, IO_EXPANDER_OUTPUT);
          ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander_,IO_EXPANDER_PIN_NUM_7, level));
     }
 
