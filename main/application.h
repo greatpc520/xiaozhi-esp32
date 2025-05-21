@@ -73,7 +73,7 @@ public:
     void PlaySound(const std::string_view& sound);
     bool CanEnterSleepMode();
     // 获取协议对象
-    // Protocol* GetProtocol() { return protocol_.get(); }
+    Protocol* GetProtocolPtr() { return protocol_.get(); }
     
     Protocol& GetProtocol() { return *protocol_; }
 
