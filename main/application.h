@@ -76,6 +76,7 @@ public:
     Protocol* GetProtocolPtr() { return protocol_.get(); }
     
     Protocol& GetProtocol() { return *protocol_; }
+    void SendMcpMessage(const std::string& payload);
 
 private:
     Application();
