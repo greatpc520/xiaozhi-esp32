@@ -128,9 +128,10 @@ private:
         }
         vTaskDelete(NULL);
     }
-
+    
     void InitCst816d()
     {
+        // return;
         ESP_LOGI(TAG, "Init CST816x");
         try
         {

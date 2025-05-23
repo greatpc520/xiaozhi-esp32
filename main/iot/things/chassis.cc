@@ -31,7 +31,7 @@
 
 #define TAG "Chassis"
 #define MOUNT_POINT "/sdcard"
-#define AUDIO_FILE_EXTENSION ".p3"
+#define AUDIO_FILE_EXTENSION ".P3"
 
 void PlayMusic(int file_number)
     {
@@ -53,6 +53,7 @@ void PlayMusic(int file_number)
         {
           audio_files.push_back(entry->d_name); // 将符合条件的文件存入容器
         }
+        ESP_LOGE(TAG, " file name: %s", entry->d_name);
       }
       ESP_LOGE(TAG, " file number: %d", audio_files.size());
       closedir(dir);
@@ -96,6 +97,7 @@ void PlayMusic(int file_number)
       app.PlaySound(sound_view);
       ESP_LOGI(TAG, "File %s played successfully", file_path);
     }
+
 namespace iot {
 
 class Chassis : public Thing {
@@ -161,7 +163,7 @@ void SendUartMessage(const char * command_str) {
 */
 
 public:
-    Chassis() : Thing("Chassis", "终端：有云台可以上下左右旋转；可以开关屏幕；开关指示灯；可以重复操作"){
+    Chassis() : Thing("Chassis", "终端：有云台可以上下左右旋转；可以开关屏幕；开关指示灯；播放本地音乐；可以重复操作"){
         // InitializeEchoUart();
 
         // 定义设备的属性
@@ -219,6 +221,9 @@ public:
         });
         methods_.AddMethod("sysReset", "系统重启", ParameterList(), [this](const ParameterList& parameters) {
                       esp_restart();
+        });
+         methods_.AddMethod("PlayMusic", "播放本地音乐", ParameterList(), [this](const ParameterList& parameters) {
+                      PlayMusic(0);
         });
 /*
         methods_.AddMethod("Dance", "跳舞", ParameterList(), [this](const ParameterList& parameters) {

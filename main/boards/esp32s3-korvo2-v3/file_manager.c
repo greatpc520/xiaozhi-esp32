@@ -48,6 +48,67 @@ void sd_unmount(void)
     }
     spi_bus_free(SPI3_HOST);
 }
+
+void test_sd_card()
+{
+  //测试TF卡读写速度
+  // ... 挂载和打印目录后，插入如下代码 ...
+
+#define TEST_FILE_PATH   "/sdcard/AUTORUN.INF"
+#define TEST_FILE_SIZE   (1024 * 1024) // 1MB
+#define TEST_BLOCK_SIZE  4096
+#include <errno.h>
+// 写速度测试
+FILE *f = fopen(TEST_FILE_PATH, "wb");
+if (f) {
+    uint8_t *buf = (uint8_t*)malloc(TEST_BLOCK_SIZE);
+    memset(buf, 0xA5, TEST_BLOCK_SIZE);
+
+    uint32_t total = 0;
+    int64_t start = esp_timer_get_time();
+    while (total < TEST_FILE_SIZE) {
+        size_t written = fwrite(buf, 1, TEST_BLOCK_SIZE, f);
+        if (written != TEST_BLOCK_SIZE) break;
+        total += written;
+    }
+    fflush(f);
+    int64_t end = esp_timer_get_time();
+    fclose(f);
+    free(buf);
+
+    float seconds = (end - start) / 1000000.0f;
+    float speed = total / 1024.0f / seconds;
+    ESP_LOGI(TAG, "TF卡写入速度: %.2f KB/s, 总写入: %" PRIu32 " 字节, 用时: %.2f 秒", speed, total, seconds);
+} else {
+    // ESP_LOGE(TAG, "无法创建测试文件进行写入速度测试");
+    ESP_LOGE(TAG, "无法创建测试文件进行写入速度测试, errno=%d", errno);
+// perror("fopen");
+}
+
+// 读速度测试
+f = fopen(TEST_FILE_PATH, "rb");
+if (f) {
+    uint8_t *buf = (uint8_t*)malloc(TEST_BLOCK_SIZE);
+
+    uint32_t total = 0;
+    int64_t start = esp_timer_get_time();
+    while (total < TEST_FILE_SIZE) {
+        size_t read = fread(buf, 1, TEST_BLOCK_SIZE, f);
+        if (read == 0) break;
+        total += read;
+    }
+    int64_t end = esp_timer_get_time();
+    fclose(f);
+    free(buf);
+
+    float seconds = (end - start) / 1000000.0f;
+    float speed = total / 1024.0f / seconds;
+    ESP_LOGI(TAG, "TF卡读取速度: %.2f KB/s, 总读取: %" PRIu32 " 字节, 用时: %.2f 秒", speed, total, seconds);
+} else {
+    ESP_LOGE(TAG, "无法打开测试文件进行读取速度测试");
+}
+}
+
 esp_err_t fm_sdcard_init(void)
 {
     esp_err_t ret;
@@ -108,6 +169,7 @@ host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;  // 设置为高速模式
     // Card has been initialized, print its properties
     sdmmc_card_print_info(stdout, card);
     flag_mount = true;
+    test_sd_card();
     return ESP_OK;
 }
 
