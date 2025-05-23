@@ -108,6 +108,8 @@ private:
             s->set_hmirror(s, 1);  // 这里控制摄像头镜像 写1镜像 写0不镜像
         }
         camera_is_init = true;
+        ESP_LOGI(TAG, "Camera init success");
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
     //释放摄像头资源，反初始化涉嫌头
