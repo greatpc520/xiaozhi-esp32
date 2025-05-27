@@ -343,6 +343,7 @@ private:
         thing_manager.AddThing(iot::CreateThing("Speaker"));
         thing_manager.AddThing(iot::CreateThing("Chassis"));
         thing_manager.AddThing(iot::CreateThing("Camera"));
+        thing_manager.AddThing(iot::CreateThing("ImageDisplayer"));
     }
 
         void init_sd()
