@@ -549,42 +549,67 @@ void SpiLcdAnimDisplay::ShowIdleImage() {
 struct DownloadImageParams
 {
     const char *url;
-    lv_obj_t *target_obj;
     LcdDisplay *display;
 };
+
 // 定义消息结构体
 typedef struct
 {
-    lv_obj_t *obj;
+    LcdDisplay *display;
     lv_img_dsc_t *img_desc;
-} lvgl_img_update_t;
+    unsigned width;
+    unsigned height;
+} lvgl_canvas_update_t;
 
-// LVGL更新回调函数
+// LVGL更新回调函数 - 修改为使用画布显示
 static void lvgl_update_cb(void *data)
 {
-    lvgl_img_update_t *update = (lvgl_img_update_t *)data;
-    if (update && update->obj && update->img_desc)
+    lvgl_canvas_update_t *update = (lvgl_canvas_update_t *)data;
+    if (update && update->display && update->img_desc)
     {
-        lv_obj_clear_flag(update->obj, LV_OBJ_FLAG_HIDDEN);
-        lv_img_set_src(update->obj, update->img_desc);
-        // 创建一个 FreeRTOS 任务，在 3 秒后隐藏图片
-        struct HideTaskParam { lv_obj_t* obj; };
+        // 检查画布是否存在，如果不存在则创建
+        if (!update->display->HasCanvas()) {
+            update->display->CreateCanvas();
+            ESP_LOGI(TAG, "创建画布用于显示表情图片");
+        }
+        
+        // 根据图片格式处理数据
+        const uint8_t* image_data = update->img_desc->data;
+        
+        if (update->img_desc->header.cf == LV_COLOR_FORMAT_RGB565) {
+            // 直接使用RGB565数据绘制到画布
+            update->display->DrawImageOnCanvas(0, 0, update->width, update->height, image_data);
+            ESP_LOGI(TAG, "RGB565图片已绘制到画布: %ux%u", update->width, update->height);
+        } else if (update->img_desc->header.cf == LV_COLOR_FORMAT_RGB565A8) {
+            // RGB565A8格式：前面是RGB565数据，后面是Alpha数据
+            // 这里只使用RGB565部分绘制到画布（画布不支持透明度）
+            update->display->DrawImageOnCanvas(0, 0, update->width, update->height, image_data);
+            ESP_LOGI(TAG, "RGB565A8图片已绘制到画布: %ux%u (忽略Alpha通道)", update->width, update->height);
+        } else {
+            ESP_LOGW(TAG, "不支持的图片格式，无法绘制到画布: %d", update->img_desc->header.cf);
+        }
+        
+        // 创建一个 FreeRTOS 任务，在 3 秒后销毁画布
+        struct HideTaskParam { LcdDisplay* display; };
         auto* hide_param = (HideTaskParam*)malloc(sizeof(HideTaskParam));
-        hide_param->obj = update->obj;
+        hide_param->display = update->display;
         xTaskCreate([](void* arg){
             auto* hp = (HideTaskParam*)arg;
             vTaskDelay(pdMS_TO_TICKS(3000));
-            lv_async_call([](void* obj_ptr){
-                // 先清空图片再隐藏
-                lv_img_set_src((lv_obj_t*)obj_ptr, NULL);
-                lv_obj_add_flag((lv_obj_t*)obj_ptr, LV_OBJ_FLAG_HIDDEN);
-            }, hp->obj);
+            lv_async_call([](void* display_ptr){
+                LcdDisplay* display = (LcdDisplay*)display_ptr;
+                if (display && display->HasCanvas()) {
+                    display->DestroyCanvas();
+                    ESP_LOGI(TAG, "已销毁画布，表情图片已隐藏");
+                }
+            }, hp->display);
             free(hp);
             vTaskDelete(NULL);
         }, "hide_emotion", 2048, hide_param, 1, NULL);
     }
     free(data);
 }
+
 // RGB888转RGB565函数
 uint16_t RGB888ToRGB565(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -1408,10 +1433,12 @@ static void download_image_task(void *arg)
     
     if (downloadAndDecodeImage(params->url, img_desc)) {
         // 创建更新消息
-        lvgl_img_update_t *update = (lvgl_img_update_t *)malloc(sizeof(lvgl_img_update_t));
+        lvgl_canvas_update_t *update = (lvgl_canvas_update_t *)malloc(sizeof(lvgl_canvas_update_t));
         if (update) {
-            update->obj = params->target_obj;
+            update->display = params->display;
             update->img_desc = &img_desc;
+            update->width = img_desc.header.w;
+            update->height = img_desc.header.h;
             // 发送到LVGL任务队列
             lv_async_call(lvgl_update_cb, update);
         }
@@ -1433,13 +1460,8 @@ void SpiLcdAnimDisplay::SetEmotion(const char* emotion) {
     
     // 检查是否是URL（以http开头）
     if (emotion && strncmp(emotion, "http", 4) == 0) {
-        // 如果是URL，下载图片并显示
+        // 如果是URL，下载图片并显示到画布
         ESP_LOGI(TAG, "SetEmotion: downloading image from URL: %s", emotion);
-        
-        if (emotion_label_img == nullptr) {
-            ESP_LOGE(TAG, "emotion_label_img is null");
-            return;
-        }
         
         // 创建下载参数
         DownloadImageParams* params = (DownloadImageParams*)malloc(sizeof(DownloadImageParams));
@@ -1450,7 +1472,6 @@ void SpiLcdAnimDisplay::SetEmotion(const char* emotion) {
         
         // 复制URL字符串
         params->url = strdup(emotion);
-        params->target_obj = emotion_label_img;
         params->display = this;
         
         // 启动下载任务
@@ -1459,6 +1480,12 @@ void SpiLcdAnimDisplay::SetEmotion(const char* emotion) {
         // 如果不是URL，调用父类的实现（显示表情符号）
         ESP_LOGI(TAG, "SetEmotion: displaying emoji: %s", emotion ? emotion : "null");
         
+        // 如果有画布在显示图片，先销毁它
+        if (HasCanvas()) {
+            DestroyCanvas();
+            ESP_LOGI(TAG, "销毁画布以显示表情符号");
+        }
+        
         // 先隐藏图片对象
         if (emotion_label_img) {
             lv_img_set_src(emotion_label_img, NULL);
@@ -1466,7 +1493,7 @@ void SpiLcdAnimDisplay::SetEmotion(const char* emotion) {
         }
         
         // 调用父类实现
-        LcdDisplay::SetEmotion(emotion);
+        // LcdDisplay::SetEmotion(emotion);
     }
 }
     
