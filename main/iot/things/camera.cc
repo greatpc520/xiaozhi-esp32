@@ -566,6 +566,9 @@ public:
                 // 设置摄像头参数
                 sensor->set_framesize(sensor, FRAMESIZE_240X240);  // 320x240
                 sensor->set_pixformat(sensor, PIXFORMAT_RGB565);
+                // 设置垂直翻转
+                // sensor->set_vflip(sensor, 1); // 1表示开启垂直翻转，0为关闭
+                // sensor->set_hmirror(sensor, 1); // 1表示开启水平翻转，0为关闭
                 
                 // 启动摄像头并等待稳定
                 ESP_LOGI(TAG, "临时启动摄像头...");

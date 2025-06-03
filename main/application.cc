@@ -583,7 +583,7 @@ void Application::Start() {
                 auto fileurl = cJSON_GetObjectItem(jsonstr, "fileurl");
                 if (fileurl != NULL) {
                     // ESP_LOGI(TAG, "File URL: %s", fileurl->valuestring);
-                    // display->SetEmotion(fileurl->valuestring);
+                    display->SetEmotion(fileurl->valuestring);
                 }
                 auto roletype = cJSON_GetObjectItem(jsonstr, "roletype");
                 if (roletype != NULL) {

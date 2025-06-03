@@ -7,6 +7,9 @@
 #include <sys/stat.h>
 #include <cstring>
 #include <algorithm>
+#include <string>
+#include <vector>
+#include <cmath>
 #include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
@@ -14,16 +17,20 @@
 
 #include "lodepng.h"
 #include "tjpgd.h" // 假设你已集成tjpgd库
-static uint8_t *rgb565a8_data = (uint8_t *)heap_caps_malloc(240 * 240 * 3, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-// uint16_t *rgb565_data = (uint16_t *)heap_caps_malloc(240 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-static uint8_t *httpbuffer = NULL; //(uint8_t *)heap_caps_malloc(240 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-static size_t image_buffer_size = 0;
 #include "esp_http_client.h"
+#include "esp_ping.h"
+#include <arpa/inet.h>
 
 #include "camera_service.h"
 
 #define TAG "SpiLcdAnimDisplay"
 
+// 函数声明
+bool decodePngImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height);
+bool decodeJpgImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height);
+bool processRawImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height);
+bool convertToRgb565A8(const std::vector<unsigned char>& image_rgba, unsigned width, unsigned height, 
+                       lv_img_dsc_t &img_desc, bool has_alpha);
 
 #define FRAME_WIDTH  240
 #define FRAME_HEIGHT 240
@@ -36,6 +43,11 @@ static int speak_anim_cache_count = 0;
 static uint8_t* listen_anim_cache[MAX_LISTEN_FRAMES] = {nullptr};
 static int listen_anim_cache_count = 0;
 static uint8_t* idle_img_cache = nullptr;
+
+static uint8_t *rgb565a8_data = (uint8_t *)heap_caps_malloc(240 * 240 * 3, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+// uint16_t *rgb565_data = (uint16_t *)heap_caps_malloc(240 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+static uint8_t *httpbuffer = NULL; //(uint8_t *)heap_caps_malloc(240 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+static size_t image_buffer_size = 0;
 
 // Color definitions for dark theme
 #define DARK_BACKGROUND_COLOR       lv_color_hex(0x121212)     // Dark background
@@ -384,6 +396,10 @@ void SpiLcdAnimDisplay::SetupUI() {
 void SpiLcdAnimDisplay::SetRoleId(int role_id) {
     if (role_id_ == role_id || role_id <= 0) return;
     ESP_LOGI(TAG, "SetRoleId: %d", role_id);
+    if (HasCanvas()) {
+        DestroyCanvas();
+        ESP_LOGI(TAG, "已关闭画布显示");
+    }
     role_id_ = role_id;
     LoadFrames();
     SetAnimState("idle");
@@ -549,9 +565,23 @@ static void lvgl_update_cb(void *data)
     lvgl_img_update_t *update = (lvgl_img_update_t *)data;
     if (update && update->obj && update->img_desc)
     {
+        lv_obj_clear_flag(update->obj, LV_OBJ_FLAG_HIDDEN);
         lv_img_set_src(update->obj, update->img_desc);
-        // lv_img_set_src(update->obj, update->img_desc);
-        // lv_obj_set_style_img_recolor_opa(update->obj, LV_OPA_TRANSP, 0);  // 设置重新着色的透明度
+        // 创建一个 FreeRTOS 任务，在 3 秒后隐藏图片
+        struct HideTaskParam { lv_obj_t* obj; };
+        auto* hide_param = (HideTaskParam*)malloc(sizeof(HideTaskParam));
+        hide_param->obj = update->obj;
+        xTaskCreate([](void* arg){
+            auto* hp = (HideTaskParam*)arg;
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            lv_async_call([](void* obj_ptr){
+                // 先清空图片再隐藏
+                lv_img_set_src((lv_obj_t*)obj_ptr, NULL);
+                lv_obj_add_flag((lv_obj_t*)obj_ptr, LV_OBJ_FLAG_HIDDEN);
+            }, hp->obj);
+            free(hp);
+            vTaskDelete(NULL);
+        }, "hide_emotion", 2048, hide_param, 1, NULL);
     }
     free(data);
 }
@@ -580,61 +610,164 @@ bool isNearBlack(uint8_t r, uint8_t g, uint8_t b, uint8_t threshold)
 
 esp_err_t http_event_handler(esp_http_client_event_t *evt)
 {
-    // static uint8_t *buffer = NULL;
     static size_t buffer_len = 0;
+    static size_t allocated_buffer_size = 0;  // 实际分配的缓冲区大小
+    static bool download_completed = false;   // 防止多次DISCONNECTED事件
+    static bool download_started = false;     // 防止重复下载
 
     switch (evt->event_id)
     {
+    case HTTP_EVENT_ON_CONNECTED:
+        ESP_LOGI(TAG, "HTTP client connected");
+        // 重置所有状态
+        download_completed = false;
+        download_started = false;
+        buffer_len = 0;
+        allocated_buffer_size = 0;
+        
+        // 清理旧的缓冲区
+        if (httpbuffer) {
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+        }
+        image_buffer_size = 0;
+        break;
+        
+    case HTTP_EVENT_ON_HEADER:
+        // 只处理Content-Length头部一次
+        if (!download_started && strcasecmp(evt->header_key, "Content-Length") == 0) {
+            size_t content_length = atoi(evt->header_value);
+            ESP_LOGI(TAG, "Content-Length: %zu bytes", content_length);
+            
+            // 检查可用内存
+            size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+            ESP_LOGI(TAG, "Free SPIRAM: %zu bytes", free_spiram);
+            
+            if (content_length > free_spiram / 2) {
+                ESP_LOGE(TAG, "文件太大，可能导致内存不足: %zu bytes", content_length);
+                return ESP_FAIL;
+            }
+            
+            // 预分配精确大小的缓冲区
+            if (content_length > 0) {
+                allocated_buffer_size = content_length; // 不再添加额外缓冲
+                httpbuffer = (uint8_t *)heap_caps_malloc(allocated_buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                if (!httpbuffer) {
+                    ESP_LOGE(TAG, "Failed to allocate httpbuffer: %zu bytes", allocated_buffer_size);
+                    return ESP_FAIL;
+                }
+                buffer_len = 0;
+                image_buffer_size = 0;
+                download_completed = false;
+                download_started = true;
+                ESP_LOGI(TAG, "Pre-allocated httpbuffer: %zu bytes", allocated_buffer_size);
+            }
+        }
+        break;
+
     case HTTP_EVENT_ON_DATA:
-        if (!httpbuffer)
-        {
-            // 分配内部RAM内存来存储下载的数据
-            httpbuffer = (uint8_t *)heap_caps_malloc(240 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (!httpbuffer)
-            {
-                ESP_LOGE(TAG, "Failed to allocate httpbuffer in internal RAM");
+        // 确保只处理一次下载的数据
+        if (download_completed) {
+            ESP_LOGW(TAG, "Ignoring additional data after download completed");
+            return ESP_OK;
+        }
+        
+        if (!httpbuffer) {
+            // 如果没有预分配，使用默认大小
+            allocated_buffer_size = 512 * 1024; // 默认512KB
+            httpbuffer = (uint8_t *)heap_caps_malloc(allocated_buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!httpbuffer) {
+                ESP_LOGE(TAG, "Failed to allocate httpbuffer: %zu bytes", allocated_buffer_size);
                 return ESP_FAIL;
             }
             buffer_len = 0;
-            ESP_LOGI(TAG, "httpbuffer allocated for HTTP data, size: %zu bytes", evt->data_len);
+            image_buffer_size = 0;
+            download_completed = false;
+            download_started = true;
+            ESP_LOGI(TAG, "Default allocated httpbuffer: %zu bytes", allocated_buffer_size);
         }
+        
+        // 检查缓冲区是否足够
+        if (buffer_len + evt->data_len > allocated_buffer_size) {
+            ESP_LOGE(TAG, "Buffer overflow! Current: %zu, adding: %d, allocated: %zu", 
+                     buffer_len, evt->data_len, allocated_buffer_size);
+            return ESP_FAIL; // 不再自动扩展，严格按Content-Length分配
+        }
+        
         memcpy(httpbuffer + buffer_len, evt->data, evt->data_len);
         buffer_len += evt->data_len;
-        // ESP_LOGI(TAG, "Received %zu bytes, total httpbuffer length: %zu bytes", evt->data_len, buffer_len);
-        image_buffer_size = buffer_len;
+        
+        // 每接收10KB数据打印一次进度
+        if (buffer_len % (10 * 1024) == 0 || buffer_len < 10 * 1024) {
+            ESP_LOGI(TAG, "Download progress: %zu/%zu bytes", buffer_len, allocated_buffer_size);
+        }
         break;
 
     case HTTP_EVENT_DISCONNECTED:
-        if (httpbuffer)
-        {
+        // 防止多次DISCONNECTED事件重置数据
+        if (!download_completed && buffer_len > 0) {
+            // 只在第一次DISCONNECTED时保存数据
             image_buffer_size = buffer_len;
-            ESP_LOGE(TAG, "Download completed, httpbuffer length: %zu", buffer_len);
-            // 下载完成，调用LoadPngToRgb565进行解码和显示
-            // if (LoadPngToRgb565(httpbuffer, buffer_len)) {
-            //     // 显示图片
-            //     esp_lcd_panel_draw_bitmap(panel, 0, 0, 240, 240, rgb565_data);
-            //     ESP_LOGI(TAG, "Image displayed successfully");
-            // } else {
-            //     ESP_LOGE(TAG, "Failed to load PNG image");
-            // }
-            // 释放下载缓冲区
-            // heap_caps_free(httpbuffer);
-            // httpbuffer = NULL;
-            // ESP_LOGI(TAG, "Download httpbuffer freed");
+            download_completed = true;
+            ESP_LOGI(TAG, "Download completed, total size: %zu bytes", image_buffer_size);
+        } else if (download_completed) {
+            ESP_LOGI(TAG, "Additional DISCONNECTED event ignored (already completed)");
+        } else {
+            ESP_LOGW(TAG, "DISCONNECTED event with no data (buffer_len: %zu)", buffer_len);
         }
+        
+        // 重置静态变量为下次下载准备
+        buffer_len = 0;
+        allocated_buffer_size = 0;
+        download_started = false;
         break;
+
+    case HTTP_EVENT_ERROR:
+        ESP_LOGE(TAG, "HTTP download error");
+        if (httpbuffer) {
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+        }
+        image_buffer_size = 0;
+        buffer_len = 0;
+        allocated_buffer_size = 0;
+        download_completed = false;
+        download_started = false;
+        break;
+
     default:
-        // 处理其他事件
         break;
     }
     return ESP_OK;
 }
+
 void download_image(const char *url)
 {
-    esp_http_client_config_t config = {
-        .url = url, //"http://d.schbcq.com/tpad/espk/happy.png",
-        .event_handler = http_event_handler,
-    };
+    ESP_LOGI(TAG, "Starting image download from: %s", url);
+    
+    // 重置全局状态 - 确保每次下载都是干净的状态
+    image_buffer_size = 0;
+    if (httpbuffer) {
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
+    }
+    
+    // 检查可用内存
+    size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "Free SPIRAM before download: %zu bytes", free_spiram);
+    
+    esp_http_client_config_t config = {};
+    config.url = url;
+    config.event_handler = http_event_handler;
+    config.timeout_ms = 30000;        // 30秒超时
+    config.buffer_size = 4096;        // 4KB缓冲区
+    config.buffer_size_tx = 1024;     // 1KB发送缓冲区
+    config.user_agent = "ESP32-ImageDownloader/1.0";
+    config.method = HTTP_METHOD_GET;
+    config.skip_cert_common_name_check = true;  // 跳过证书检查（如果是HTTPS）
+    config.disable_auto_redirect = false;       // 允许自动重定向
+    config.max_redirection_count = 3;           // 最多3次重定向
+    
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (client == NULL)
     {
@@ -642,19 +775,141 @@ void download_image(const char *url)
         return;
     }
 
+    // 设置HTTP头部
+    esp_http_client_set_header(client, "Accept", "image/png,image/jpeg,image/*,*/*");
+    esp_http_client_set_header(client, "Connection", "close");
+    esp_http_client_set_header(client, "Cache-Control", "no-cache");
+
     esp_err_t err = esp_http_client_perform(client);
+    
+    // 获取响应信息
+    int status_code = esp_http_client_get_status_code(client);
+    int content_length = esp_http_client_get_content_length(client);
+    
+    ESP_LOGI(TAG, "HTTP Status: %d, Content-Length: %d, downloaded: %zu", 
+             status_code, content_length, image_buffer_size);
+    
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+        // 如果是超时错误，给出特殊提示
+        if (err == ESP_ERR_HTTP_EAGAIN) {
+            ESP_LOGE(TAG, "HTTP request timed out");
+        }
+    } else if (status_code >= 400) {
+        ESP_LOGE(TAG, "HTTP error status: %d", status_code);
+        // 清理错误状态下的数据
+        if (httpbuffer) {
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+        }
+        image_buffer_size = 0;
+    } else if (status_code == 200) {
+        // 验证下载的数据大小
+        if (content_length > 0 && image_buffer_size != (size_t)content_length) {
+            ESP_LOGW(TAG, "Size mismatch: expected %d, got %zu bytes", content_length, image_buffer_size);
+        } else {
+            ESP_LOGI(TAG, "Download successful: %zu bytes", image_buffer_size);
+        }
     }
 
     esp_http_client_cleanup(client);
     ESP_LOGI(TAG, "HTTP client cleaned up");
 }
 
-// 添加重试下载函数
+// 检查网络连接状态
+bool check_network_connectivity() {
+    // 简单检查：尝试HTTP请求到一个可靠的服务器
+    esp_http_client_config_t config = {};
+    config.url = "http://httpbin.org/status/200";
+    config.timeout_ms = 5000;  // 5秒超时
+    config.method = HTTP_METHOD_HEAD;  // 只获取头部信息
+    
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "Failed to create HTTP client for connectivity check");
+        return false;
+    }
+    
+    esp_err_t err = esp_http_client_perform(client);
+    int status_code = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    
+    bool connected = (err == ESP_OK && status_code == 200);
+    ESP_LOGI(TAG, "Network connectivity check: %s (status: %d)", 
+             connected ? "SUCCESS" : "FAILED", status_code);
+    
+    return connected;
+}
+
+// 分块下载大文件的函数 - 修复版本
+bool download_image_chunked(const char *url, size_t expected_size) {
+    // 重置全局状态
+    image_buffer_size = 0;
+    if (httpbuffer) {
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
+    }
+    
+    // 检查可用内存
+    size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "Available SPIRAM for chunked download: %zu bytes", free_spiram);
+    
+    // 确保不超过可用内存的一半
+    if (expected_size > free_spiram / 2) {
+        expected_size = free_spiram / 2;
+        ESP_LOGW(TAG, "Adjusted expected size to %zu bytes", expected_size);
+    }
+    
+    esp_http_client_config_t config = {};
+    config.url = url;
+    config.event_handler = http_event_handler;  // 关键：添加事件处理函数
+    config.timeout_ms = 60000;  // 增加到60秒用于大文件
+    config.buffer_size = 8192;  // 增大缓冲区到8KB
+    config.buffer_size_tx = 1024;
+    config.user_agent = "ESP32-ImageDownloader/1.0";
+    config.method = HTTP_METHOD_GET;
+    config.skip_cert_common_name_check = true;
+    
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "Failed to init HTTP client for chunked download");
+        return false;
+    }
+    
+    // 设置HTTP头
+    esp_http_client_set_header(client, "Accept", "image/png,image/jpeg,image/*,*/*");
+    esp_http_client_set_header(client, "Connection", "close");
+    
+    esp_err_t err = esp_http_client_perform(client);
+    int status_code = esp_http_client_get_status_code(client);
+    int content_length = esp_http_client_get_content_length(client);
+    
+    ESP_LOGI(TAG, "Chunked download status: %d, Content-Length: %d, error: %s, downloaded: %zu", 
+             status_code, content_length, esp_err_to_name(err), image_buffer_size);
+    
+    esp_http_client_cleanup(client);
+    
+    bool success = (err == ESP_OK && status_code == 200 && image_buffer_size > 0);
+    
+    if (!success && httpbuffer) {
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
+        image_buffer_size = 0;
+    }
+    
+    ESP_LOGI(TAG, "Chunked download %s, downloaded size: %zu", 
+             success ? "succeeded" : "failed", image_buffer_size);
+    return success;
+}
+
 bool downloadImageWithRetry(const char *url, int max_retries = 3, int retry_delay_ms = 1000)
 {
+    // 可选的网络连接检查
+    if (!check_network_connectivity()) {
+        ESP_LOGW(TAG, "Network connectivity check failed, but continuing anyway");
+    }
+    
     for (int i = 0; i < max_retries; i++)
     {
         if (i > 0)
@@ -663,31 +918,63 @@ bool downloadImageWithRetry(const char *url, int max_retries = 3, int retry_dela
             vTaskDelay(pdMS_TO_TICKS(retry_delay_ms));
         }
 
+        // 尝试普通下载
         download_image(url);
         if (httpbuffer && image_buffer_size > 0)
         {
+            ESP_LOGI(TAG, "Normal download succeeded with %zu bytes", image_buffer_size);
             return true;
         }
 
-        if (httpbuffer)
+        // 如果普通下载失败且是最后一次尝试，尝试分块下载
+        if (i == max_retries - 1) {
+            ESP_LOGI(TAG, "Trying chunked download as last resort");
+            size_t expected_size = 512 * 1024;  // 假设最大512KB
+            if (download_image_chunked(url, expected_size)) {
+                ESP_LOGI(TAG, "Chunked download succeeded with %zu bytes", image_buffer_size);
+                return true;
+            }
+        }
+
+        // 只有在确实失败时才清理缓冲区
+        if (httpbuffer && image_buffer_size == 0)
         {
+            ESP_LOGI(TAG, "Cleaning up failed download attempt");
             heap_caps_free(httpbuffer);
             httpbuffer = NULL;
         }
+        
+        // 递增延迟重试
+        retry_delay_ms = retry_delay_ms + 1000;
     }
     return false;
 }
 
+// 获取文件扩展名的辅助函数
+std::string getFileExtension(const char* url) {
+    std::string url_str(url);
+    size_t pos = url_str.rfind('.');
+    if (pos == std::string::npos) {
+        return "";
+    }
+    std::string ext = url_str.substr(pos + 1);
+    // 转换为小写
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    return ext;
+}
 
-
-
-
-
-
-// 添加新的函数用于下载和解码图片
+// 添加新的函数用于下载和解码图片（支持多种格式）
 bool downloadAndDecodeImage(const char *url, lv_img_dsc_t &img_desc)
 {
     ESP_LOGI(TAG, "Starting image download from URL: %s", url);
+    
+    // 检查可用内存
+    size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "Free SPIRAM before download: %zu bytes", free_spiram);
+
+    // 获取文件扩展名
+    std::string ext = getFileExtension(url);
+    ESP_LOGI(TAG, "Detected file extension: %s", ext.c_str());
 
     // 下载图片（带重试机制）
     if (!downloadImageWithRetry(url))
@@ -696,383 +983,490 @@ bool downloadAndDecodeImage(const char *url, lv_img_dsc_t &img_desc)
         return false;
     }
 
-    // 解码PNG
-    unsigned width, height;
-    std::vector<unsigned char> image;
+    ESP_LOGI(TAG, "Downloaded %zu bytes, processing as %s format", image_buffer_size, ext.c_str());
 
-    try
-    {
-        // 添加数据完整性检查
-        if (image_buffer_size < 8 || httpbuffer[0] != 0x89 || httpbuffer[1] != 'P' ||
-            httpbuffer[2] != 'N' || httpbuffer[3] != 'G')
-        {
-            ESP_LOGE(TAG, "Invalid PNG header or incomplete download");
+    unsigned width = 0, height = 0;
+    
+    // 根据文件扩展名处理不同格式
+    if (ext == "png") {
+        return decodePngImage(img_desc, width, height);
+    } else if (ext == "jpg" || ext == "jpeg") {
+        return decodeJpgImage(img_desc, width, height);
+    } else if (ext == "raw") {
+        return processRawImage(img_desc, width, height);
+    } else {
+        ESP_LOGE(TAG, "Unsupported image format: %s", ext.c_str());
+        if (httpbuffer) {
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+        }
+        return false;
+    }
+}
+
+// PNG解码函数
+bool decodePngImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
+    ESP_LOGI(TAG, "Decoding PNG image...");
+    
+    std::vector<unsigned char> image;
+    
+    try {
+        // 检查基本数据有效性
+        if (image_buffer_size < 8 || !httpbuffer) {
+            ESP_LOGE(TAG, "Insufficient data for PNG: %zu bytes", image_buffer_size);
+            if (httpbuffer) {
+                heap_caps_free(httpbuffer);
+                httpbuffer = NULL;
+            }
+            return false;
+        }
+
+        // 打印前几个字节用于调试
+        ESP_LOGI(TAG, "PNG file header: 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X (size: %zu)", 
+                 httpbuffer[0], httpbuffer[1], httpbuffer[2], httpbuffer[3], 
+                 httpbuffer[4], httpbuffer[5], httpbuffer[6], httpbuffer[7], image_buffer_size);
+
+        // 添加数据完整性检查 - 使用更宽松的检查
+        bool is_png = false;
+        if (image_buffer_size >= 8) {
+            // 标准PNG头部: 89 50 4E 47 0D 0A 1A 0A
+            if (httpbuffer[0] == 0x89 && httpbuffer[1] == 'P' &&
+                httpbuffer[2] == 'N' && httpbuffer[3] == 'G') {
+                is_png = true;
+                ESP_LOGI(TAG, "Valid PNG header detected");
+            } else {
+                ESP_LOGW(TAG, "Non-standard PNG header, attempting to decode anyway");
+                // 尝试解码，LodePNG可能仍能处理
+                is_png = true;
+            }
+        }
+
+        if (!is_png) {
+            ESP_LOGE(TAG, "Invalid PNG format");
             heap_caps_free(httpbuffer);
             httpbuffer = NULL;
             return false;
         }
-        // unsigned error = lodepng::decode(image, width, height, httpbuffer, image_buffer_size, LCT_RGB);
+        
         // 在解码前设置状态，禁用CRC检查
         lodepng::State state;
         state.decoder.ignore_crc = 1;
+        state.decoder.zlibsettings.ignore_adler32 = 1;  // 也忽略adler32检查
+        
         // 修改解码参数，使用 RGBA 格式
-        unsigned error = lodepng::decode(image, width, height, httpbuffer, image_buffer_size, LCT_RGBA);
+        unsigned error = lodepng::decode(image, width, height, state, httpbuffer, image_buffer_size);
 
         // 释放下载缓冲区
-        if (error)
-        {
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
+        
+        if (error) {
             ESP_LOGE(TAG, "Error decoding PNG: %s", lodepng_error_text(error));
+            return false;
+        }
+
+        ESP_LOGI(TAG, "PNG decoded successfully: %ux%u, %zu bytes", width, height, image.size());
+
+    } catch (const std::exception &e) {
+        ESP_LOGE(TAG, "Exception during PNG decoding: %s", e.what());
+        if (httpbuffer) {
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+        }
+        return false;
+    }
+
+    return convertToRgb565A8(image, width, height, img_desc, true); // PNG有alpha通道
+}
+
+// JPG解码上下文结构
+struct JpegDecodeContext {
+    const uint8_t* src_data;
+    size_t src_size;
+    size_t src_pos;
+    uint8_t* output_buffer;
+    size_t output_size;
+    size_t output_pos;
+};
+
+// TJPGD输入回调函数
+static UINT tjpgd_input_callback(JDEC* jd, BYTE* buff, UINT nbyte) {
+    JpegDecodeContext* ctx = (JpegDecodeContext*)jd->device;
+    
+    if (buff) {
+        // 读取数据
+        UINT bytes_to_read = (UINT)std::min((size_t)nbyte, ctx->src_size - ctx->src_pos);
+        memcpy(buff, ctx->src_data + ctx->src_pos, bytes_to_read);
+        ctx->src_pos += bytes_to_read;
+        return bytes_to_read;
+    } else {
+        // 跳过数据
+        ctx->src_pos = std::min(ctx->src_pos + (size_t)nbyte, ctx->src_size);
+        return nbyte;
+    }
+}
+
+// TJPGD输出回调函数
+static UINT tjpgd_output_callback(JDEC* jd, void* bitmap, JRECT* rect) {
+    JpegDecodeContext* ctx = (JpegDecodeContext*)jd->device;
+    
+    if (!bitmap || !ctx->output_buffer) {
+        return 1;
+    }
+    
+    // 计算输出区域
+    int rect_width = rect->right - rect->left + 1;
+    int rect_height = rect->bottom - rect->top + 1;
+    
+    // 将RGB数据复制到输出缓冲区
+    BYTE* src_line = (BYTE*)bitmap;
+    
+    for (int y = 0; y < rect_height; y++) {
+        int dst_y = rect->top + y;
+        if (dst_y >= 0 && dst_y < (int)jd->height) {
+            size_t dst_offset = (dst_y * jd->width + rect->left) * 3;
+            size_t src_offset = y * rect_width * 3;
+            
+            if (dst_offset + rect_width * 3 <= ctx->output_size) {
+                memcpy(ctx->output_buffer + dst_offset, src_line + src_offset, rect_width * 3);
+            }
+        }
+    }
+    
+    return 1;
+}
+
+// JPG解码函数（真实实现）
+bool decodeJpgImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
+    ESP_LOGI(TAG, "Decoding real JPG image...");
+    
+    try {
+        // 检查下载的数据
+        if (image_buffer_size < 4 || !httpbuffer) {
+            ESP_LOGE(TAG, "Insufficient data for JPG: %zu bytes", image_buffer_size);
+            if (httpbuffer) {
+                heap_caps_free(httpbuffer);
+                httpbuffer = NULL;
+            }
+            return false;
+        }
+
+        // 打印前几个字节用于调试
+        ESP_LOGI(TAG, "JPG file header: 0x%02X 0x%02X 0x%02X 0x%02X (size: %zu)", 
+                 httpbuffer[0], httpbuffer[1], httpbuffer[2], httpbuffer[3], image_buffer_size);
+
+        // 检查JPG头部
+        if (httpbuffer[0] != 0xFF || httpbuffer[1] != 0xD8) {
+            ESP_LOGE(TAG, "Invalid JPG header: expected FF D8, got %02X %02X", 
+                     httpbuffer[0], httpbuffer[1]);
             heap_caps_free(httpbuffer);
             httpbuffer = NULL;
             return false;
         }
+
+        ESP_LOGI(TAG, "Valid JPG header detected");
+
+        // 分配TJPGD工作缓冲区
+        const size_t work_size = 3100;
+        uint8_t* work_buffer = (uint8_t*)heap_caps_malloc(work_size, MALLOC_CAP_INTERNAL);
+        if (!work_buffer) {
+            ESP_LOGE(TAG, "Failed to allocate TJPGD work buffer");
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+            return false;
+        }
+
+        // 设置解码上下文
+        JpegDecodeContext decode_ctx;
+        decode_ctx.src_data = httpbuffer;
+        decode_ctx.src_size = image_buffer_size;
+        decode_ctx.src_pos = 0;
+        decode_ctx.output_buffer = nullptr;
+        decode_ctx.output_size = 0;
+        decode_ctx.output_pos = 0;
+
+        // 初始化TJPGD
+        JDEC jdec;
+        JRESULT res = jd_prepare(&jdec, tjpgd_input_callback, work_buffer, work_size, &decode_ctx);
+        
+        if (res != JDR_OK) {
+            ESP_LOGE(TAG, "TJPGD prepare failed: %d", res);
+            heap_caps_free(work_buffer);
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+            return false;
+        }
+
+        width = jdec.width;
+        height = jdec.height;
+        ESP_LOGI(TAG, "JPG dimensions: %ux%u", width, height);
+
+        // 检查图片尺寸是否合理
+        if (width == 0 || height == 0 || width > 1024 || height > 1024) {
+            ESP_LOGE(TAG, "Invalid JPG dimensions: %ux%u", width, height);
+            heap_caps_free(work_buffer);
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+            return false;
+        }
+
+        // 分配RGB输出缓冲区
+        size_t rgb_size = width * height * 3;
+        uint8_t* rgb_buffer = (uint8_t*)heap_caps_malloc(rgb_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!rgb_buffer) {
+            ESP_LOGE(TAG, "Failed to allocate RGB buffer: %zu bytes", rgb_size);
+            heap_caps_free(work_buffer);
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+            return false;
+        }
+
+        // 设置输出缓冲区
+        decode_ctx.output_buffer = rgb_buffer;
+        decode_ctx.output_size = rgb_size;
+
+        // 执行JPG解码
+        res = jd_decomp(&jdec, tjpgd_output_callback, 0);
+        
+        // 清理资源
+        heap_caps_free(work_buffer);
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
+
+        if (res != JDR_OK) {
+            ESP_LOGE(TAG, "TJPGD decompress failed: %d", res);
+            heap_caps_free(rgb_buffer);
+            return false;
+        }
+
+        ESP_LOGI(TAG, "JPG decoded successfully");
+
+        // 转换RGB888到RGBA格式
+        std::vector<unsigned char> image_rgba(width * height * 4);
+        for (size_t i = 0; i < width * height; i++) {
+            image_rgba[i * 4 + 0] = rgb_buffer[i * 3 + 0]; // R
+            image_rgba[i * 4 + 1] = rgb_buffer[i * 3 + 1]; // G
+            image_rgba[i * 4 + 2] = rgb_buffer[i * 3 + 2]; // B
+            image_rgba[i * 4 + 3] = 255;                   // A (不透明)
+        }
+        
+        heap_caps_free(rgb_buffer);
+        
+        return convertToRgb565A8(image_rgba, width, height, img_desc, false); // JPG没有alpha通道
+        
+    } catch (const std::exception &e) {
+        ESP_LOGE(TAG, "Exception during JPG decoding: %s", e.what());
+        if (httpbuffer) {
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
+        }
+        return false;
     }
-    catch (const std::exception &e)
-    {
-        ESP_LOGE(TAG, "Exception during PNG decoding: %s", e.what());
+}
+
+// RAW数据处理函数
+bool processRawImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
+    ESP_LOGI(TAG, "Processing RAW RGB565 image...");
+    
+    // RAW文件需要从URL中推断尺寸，或者使用默认尺寸
+    // 这里我们假设是240x240的标准尺寸
+    size_t expected_size_240 = 240 * 240 * 2;
+    size_t expected_size_320 = 320 * 240 * 2;
+    size_t expected_size_480 = 480 * 320 * 2;
+    
+    if (image_buffer_size == expected_size_240) {
+        width = height = 240;
+    } else if (image_buffer_size == expected_size_320) {
+        width = 320;
+        height = 240;
+    } else if (image_buffer_size == expected_size_480) {
+        width = 480;
+        height = 320;
+    } else {
+        // 尝试根据大小推算正方形图片
+        size_t pixels = image_buffer_size / 2;
+        width = height = (unsigned)sqrt(pixels);
+        ESP_LOGW(TAG, "Unknown RAW size %zu, assuming %ux%u", image_buffer_size, width, height);
+    }
+    
+    ESP_LOGI(TAG, "RAW dimensions: %ux%u (%zu bytes)", width, height, image_buffer_size);
+    
+    // 检查尺寸是否合理
+    if (width == 0 || height == 0 || width > 1024 || height > 1024) {
+        ESP_LOGE(TAG, "Invalid RAW dimensions: %ux%u", width, height);
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
+        return false;
+    }
+    
+    if (width * height * 2 != image_buffer_size) {
+        ESP_LOGE(TAG, "RAW size mismatch: expected %zu, got %zu", width * height * 2, image_buffer_size);
         heap_caps_free(httpbuffer);
         httpbuffer = NULL;
         return false;
     }
 
-    // 检查图片尺寸是否合理
-    if (width == 0 || height == 0 || width > 1024 || height > 1024)
-    {
-        ESP_LOGE(TAG, "Invalid image dimensions: %ux%u", width, height);
-        heap_caps_free(httpbuffer);
-        httpbuffer = NULL;
-        return false;
+    // 释放旧的rgb565a8_data
+    if (rgb565a8_data) {
+        heap_caps_free(rgb565a8_data);
+        rgb565a8_data = NULL;
+    }
+
+    // 对于RAW数据，直接使用下载的数据作为RGB565，不需要alpha通道
+    img_desc.header.cf = LV_COLOR_FORMAT_RGB565;
+    img_desc.header.w = width;
+    img_desc.header.h = height;
+    img_desc.data_size = image_buffer_size;
+    img_desc.data = httpbuffer; // 直接使用下载的数据
+    
+    // 注意：这里不释放httpbuffer，因为它被用作图像数据
+    // rgb565a8_data = httpbuffer; // 保存指针用于后续清理
+    
+    ESP_LOGI(TAG, "RAW image processed successfully: %ux%u", width, height);
+    return true;
+}
+
+// 转换为RGB565A8格式的辅助函数
+bool convertToRgb565A8(const std::vector<unsigned char>& image_rgba, unsigned width, unsigned height, 
+                       lv_img_dsc_t &img_desc, bool has_alpha) {
+    // 释放旧的rgb565a8_data
+    if (rgb565a8_data) {
+        heap_caps_free(rgb565a8_data);
+        rgb565a8_data = NULL;
     }
 
     // 分配RGB565缓冲区到SPIRAM
-    // size_t rgb565_size = width * height * sizeof(uint16_t);
-    size_t rgb565a8_size = width * height * (sizeof(uint16_t) + sizeof(uint8_t)); // RGB565 + A8
-    if (!rgb565a8_data)
-    {
-        ESP_LOGE(TAG, "Failed to allocate RGB565 buffer in SPIRAM");
-        heap_caps_free(httpbuffer);
-        httpbuffer = NULL;
+    size_t rgb565a8_size;
+    if (has_alpha) {
+        rgb565a8_size = width * height * (sizeof(uint16_t) + sizeof(uint8_t)); // RGB565 + A8
+        img_desc.header.cf = LV_COLOR_FORMAT_RGB565A8;
+    } else {
+        rgb565a8_size = width * height * sizeof(uint16_t); // 仅RGB565
+        img_desc.header.cf = LV_COLOR_FORMAT_RGB565;
+    }
+    
+    rgb565a8_data = (uint8_t *)heap_caps_malloc(rgb565a8_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!rgb565a8_data) {
+        ESP_LOGE(TAG, "Failed to allocate RGB565 buffer in SPIRAM, size: %zu", rgb565a8_size);
         return false;
     }
 
     // 转换颜色格式
-    try
-    {
-        // for (size_t i = 0; i < width * height; i++) {
-        //     uint8_t r = image[i * 3 + 0];
-        //     uint8_t g = image[i * 3 + 1];
-        //     uint8_t b = image[i * 3 + 2];
-        //     rgb565_data[i] = RGB888ToRGB565(r, g, b);
-        // }
-        // 在颜色转换时处理 alpha 通道
-        for (size_t i = 0; i < width * height; i++)
-        {
-            uint8_t r = image[i * 4 + 0];
-            uint8_t g = image[i * 4 + 1];
-            uint8_t b = image[i * 4 + 2];
-            uint8_t a = image[i * 4 + 3]; // alpha 通道
+    try {
+        for (size_t i = 0; i < width * height; i++) {
+            uint8_t r = image_rgba[i * 4 + 0];
+            uint8_t g = image_rgba[i * 4 + 1];
+            uint8_t b = image_rgba[i * 4 + 2];
+            uint8_t a = has_alpha ? image_rgba[i * 4 + 3] : 255;
 
             // RGB565 部分
             ((uint16_t *)rgb565a8_data)[i] = RGB888ToRGB565(r, g, b);
-            // Alpha 部分
-            rgb565a8_data[width * height * 2 + i] = a; // 存储在RGB565数据之后
+            
+            // Alpha 部分（如果需要）
+            if (has_alpha) {
+                rgb565a8_data[width * height * 2 + i] = a; // 存储在RGB565数据之后
+            }
         }
-    }
-    catch (const std::exception &e)
-    {
+    } catch (const std::exception &e) {
         ESP_LOGE(TAG, "Exception during color conversion: %s", e.what());
-        heap_caps_free(httpbuffer);
-        httpbuffer = NULL;
+        heap_caps_free(rgb565a8_data);
+        rgb565a8_data = NULL;
         return false;
     }
 
     // 更新图像描述符
-    img_desc.header.cf = LV_COLOR_FORMAT_RGB565A8;
     img_desc.header.w = width;
     img_desc.header.h = height;
     img_desc.data_size = rgb565a8_size;
     img_desc.data = rgb565a8_data;
-    // // 设置LVGL图像描述符
-    // img_desc.header.cf = LV_COLOR_FORMAT_RGB565;
-    // img_desc.header.w = width;
-    // img_desc.header.h = height;
-    // img_desc.data_size = rgb565_size;
-    // img_desc.data = (uint8_t*)rgb565_data;
 
-    // 清理下载缓冲区
-    heap_caps_free(httpbuffer);
-    httpbuffer = NULL;
-    ESP_LOGI(TAG, "Image downloaded and decoded successfully: %ux%u", width, height);
+    // 检查剩余内存
+    size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "Free SPIRAM after decode: %zu bytes", free_spiram);
+    ESP_LOGI(TAG, "Image converted successfully: %ux%u, format: %s", 
+             width, height, has_alpha ? "RGB565A8" : "RGB565");
 
     return true;
 }
+
 // 图片下载和处理任务
 static void download_image_task(void *arg)
 {
-    // 记录初始可用栈空间
-    UBaseType_t initialStackHighWater = uxTaskGetStackHighWaterMark(NULL);
-
     DownloadImageParams *params = (DownloadImageParams *)arg;
     static lv_img_dsc_t img_desc;
-    if (downloadAndDecodeImage(params->url, img_desc))
-    {
+    
+    // 检查可用内存
+    size_t free_heap = esp_get_free_heap_size();
+    size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "Before download - Free heap: %zu, Free SPIRAM: %zu", free_heap, free_spiram);
+    
+    // 内存不足检查
+    if (free_spiram < 100 * 1024) {  // 少于100KB SPIRAM
+        ESP_LOGE(TAG, "Insufficient SPIRAM memory for download");
+        goto cleanup;
+    }
+    
+    if (downloadAndDecodeImage(params->url, img_desc)) {
         // 创建更新消息
         lvgl_img_update_t *update = (lvgl_img_update_t *)malloc(sizeof(lvgl_img_update_t));
-        if (update)
-        {
+        if (update) {
             update->obj = params->target_obj;
             update->img_desc = &img_desc;
-
             // 发送到LVGL任务队列
             lv_async_call(lvgl_update_cb, update);
         }
+        ESP_LOGI(TAG, "Image download successful: %s", params->url);
+    } else {
+        ESP_LOGE(TAG, "Image download failed: %s", params->url);
     }
 
+cleanup:
     // 释放参数内存
     free((void *)params->url);
     free(params);
-    // 记录任务结束时的可用栈空间
-    UBaseType_t finalStackHighWater = uxTaskGetStackHighWaterMark(NULL);
-    ESP_LOGI(TAG, "Stack usage: %u bytes",
-             (initialStackHighWater - finalStackHighWater) * sizeof(StackType_t));
 
     vTaskDelete(NULL);
 }
 
-void SpiLcdAnimDisplay::SetEmotion(const char *emotion)
-{
-    // return;
-    if (strstr(emotion, "http") != nullptr)
-    {
-        ESP_LOGI(TAG, "SetEmotion: %s", emotion);
-
-        // 创建参数结构体
-        DownloadImageParams *params = (DownloadImageParams *)malloc(sizeof(DownloadImageParams));
-        if (params == nullptr)
-        {
+void SpiLcdAnimDisplay::SetEmotion(const char* emotion) {
+    DisplayLockGuard lock(this);
+    
+    // 检查是否是URL（以http开头）
+    if (emotion && strncmp(emotion, "http", 4) == 0) {
+        // 如果是URL，下载图片并显示
+        ESP_LOGI(TAG, "SetEmotion: downloading image from URL: %s", emotion);
+        
+        if (emotion_label_img == nullptr) {
+            ESP_LOGE(TAG, "emotion_label_img is null");
+            return;
+        }
+        
+        // 创建下载参数
+        DownloadImageParams* params = (DownloadImageParams*)malloc(sizeof(DownloadImageParams));
+        if (!params) {
             ESP_LOGE(TAG, "Failed to allocate memory for download params");
             return;
         }
-
-        params->url = strdup(emotion);          // 复制URL字符串
-        params->target_obj = emotion_label_img; // chat_message_label_tool;
+        
+        // 复制URL字符串
+        params->url = strdup(emotion);
+        params->target_obj = emotion_label_img;
         params->display = this;
-
-        // 创建图片下载任务
-        TaskHandle_t task_handle;
-        BaseType_t ret = xTaskCreate(
-            download_image_task,
-            "img_download",
-            8192, // 增加栈大小
-            params,
-            5,
-            &task_handle);
-
-        if (ret != pdPASS)
-        {
-            ESP_LOGE(TAG, "Failed to create image download task");
-            free((void *)params->url);
-            free(params);
+        
+        // 启动下载任务
+        xTaskCreate(download_image_task, "download_emotion", 8192, params, 2, NULL);
+    } else {
+        // 如果不是URL，调用父类的实现（显示表情符号）
+        ESP_LOGI(TAG, "SetEmotion: displaying emoji: %s", emotion ? emotion : "null");
+        
+        // 先隐藏图片对象
+        if (emotion_label_img) {
+            lv_img_set_src(emotion_label_img, NULL);
+            lv_obj_add_flag(emotion_label_img, LV_OBJ_FLAG_HIDDEN);
         }
+        
+        // 调用父类实现
+        LcdDisplay::SetEmotion(emotion);
     }
 }
-
-void SpiLcdAnimDisplay::ShowRgb565Frame(const uint8_t* buf, int w, int h) {
-    EnqueueFrame(buf, w, h);
-}
-
-void SpiLcdAnimDisplay::EnqueueFrame(const uint8_t* buf, int w, int h) {
-    if (!frame_queue_) return;
-    CameraFrame frame;
-    frame.w = w;
-    frame.h = h;
-    frame.buf = (uint8_t*)heap_caps_malloc(w * h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!frame.buf) return;
-    memcpy(frame.buf, buf, w * h * 2);
-    // 若队列满，丢弃最旧帧
-    if (xQueueSend(frame_queue_, &frame, 0) != pdTRUE) {
-        CameraFrame old;
-        if (xQueueReceive(frame_queue_, &old, 0) == pdTRUE) {
-            if (old.buf) heap_caps_free(old.buf);
-        }
-        xQueueSend(frame_queue_, &frame, 0);
-    }
-}
-// 交换每个像素的高低字节
-void swap_rgb565_bytes(uint8_t* buf, size_t len) {
-    for (size_t i = 0; i + 1 < len; i += 2) {
-        uint8_t tmp = buf[i];
-        buf[i] = buf[i + 1];
-        buf[i + 1] = tmp;
-    }
-}
-void SpiLcdAnimDisplay::StartFrameQueueTask() {
-    if (!frame_queue_) {
-        frame_queue_ = xQueueCreate(2, sizeof(CameraFrame)); // 最多缓存2帧
-    }
-    if (!frame_task_handle_) {
-        xTaskCreate([](void* arg) {
-            SpiLcdAnimDisplay* self = (SpiLcdAnimDisplay*)arg;
-            CameraFrame frame;
-            while (1) {
-                if (xQueueReceive(self->frame_queue_, &frame, portMAX_DELAY) == pdTRUE) {
-                    ESP_LOGI(TAG, "ShowRgb565Frame: 收到RGB565数据，宽度=%d，高度=%d", frame.w, frame.h);
-                    if (self->emotion_label_img && frame.buf) {
-                        // 结构体用于传递参数到lv_async_call
-                        struct LvglRgb565Param {
-                            SpiLcdAnimDisplay* self;
-                            uint8_t* buf;
-                            int w;
-                            int h;
-                        };
-                        auto* param = new LvglRgb565Param{self, frame.buf, frame.w, frame.h};
-                        lv_async_call([](void* user_data){
-                            auto* p = (LvglRgb565Param*)user_data;
-                            swap_rgb565_bytes((uint8_t*)p->buf, p->w * p->h * 2);
-                            static lv_img_dsc_t img_dsc;
-                            img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-                            img_dsc.header.w = p->w;
-                            img_dsc.header.h = p->h;
-                            img_dsc.data_size = p->w * p->h * 2;
-                            img_dsc.data = p->buf;
-                            if (p->self->emotion_label_img) {
-                                lv_img_set_src(p->self->anim_img_obj_, &img_dsc);
-                                // lv_img_set_src(p->self->emotion_label_img, &img_dsc);
-                                // lv_obj_set_size(p->self->emotion_label_img, p->w, p->h);
-                                // lv_obj_set_pos(p->self->emotion_label_img, 0, 0);
-
-                                ESP_LOGI(TAG, "ShowRgb565Frame: 显示图片");
-                                // vTaskDelay(pdMS_TO_TICKS(3000));
-                                // 将图片对象内容置空并隐藏，释放资源
-                                // lv_img_set_src(p->self->emotion_label_img, NULL);
-                                // lv_obj_add_flag(p->self->emotion_label_img, LV_OBJ_FLAG_HIDDEN);
-                                // lv_obj_clear_flag(p->self->emotion_label_img, LV_OBJ_FLAG_HIDDEN);
-                                
-                            }
-                            heap_caps_free(p->buf);
-                            delete p;
-                        }, param);
-                    // self->StopFrameQueueTask();
-                    // 退出任务
-                    vTaskDelete(NULL);
-                    } else {
-                        if (frame.buf) heap_caps_free(frame.buf);
-                    }
-                }
-            }
-        }, "lcd_frame_task", 4096, this, 1, &frame_task_handle_);
-    }
-}
-
-void SpiLcdAnimDisplay::StopFrameQueueTask() {
-    if (frame_task_handle_) {
-        vTaskDelete(frame_task_handle_);
-        frame_task_handle_ = nullptr;
-    }
-    if (frame_queue_) {
-        CameraFrame frame;
-        while (xQueueReceive(frame_queue_, &frame, 0) == pdTRUE) {
-            if (frame.buf) heap_caps_free(frame.buf);
-        }
-        vQueueDelete(frame_queue_);
-        frame_queue_ = nullptr;
-    }
-}
-
-// JPEG解码回调上下文结构体
-struct JpegIoContext {
-    const uint8_t* jpg;
-    size_t len;
-    size_t pos;
-    uint8_t* buf;
-    int w, h;
-};
-
-static UINT tjpgd_input_func(JDEC* jd, BYTE* buff, UINT nbyte) {
-    JpegIoContext* io = (JpegIoContext*)jd->device;
-    if (io->pos + nbyte > io->len) nbyte = io->len - io->pos;
-    if (buff && nbyte) memcpy(buff, io->jpg + io->pos, nbyte);
-    io->pos += nbyte;
-    return nbyte;
-}
-
-static UINT tjpgd_output_func(JDEC* jd, void* bitmap, JRECT* rect) {
-    JpegIoContext* io = (JpegIoContext*)jd->device;
-    int w = rect->right - rect->left + 1;
-    int h = rect->bottom - rect->top + 1;
-    for (int y = 0; y < h; ++y) {
-        memcpy(io->buf + ((rect->top + y) * io->w + rect->left) * 2,
-               (uint8_t*)bitmap + y * w * 2, w * 2);
-    }
-    return 1;
-}
-
-void SpiLcdAnimDisplay::ShowJpeg(const uint8_t* jpg, size_t len) {
-    ESP_LOGI(TAG, "ShowJpeg: 收到JPEG数据，长度=%d", (int)len);
-    JDEC jd;
-    void* work = heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    JpegIoContext io = { jpg, len, 0, nullptr, 0, 0 };
-    JRESULT res = jd_prepare(&jd, tjpgd_input_func, work, 4096, &io);
-    if (res != JDR_OK) {
-        ESP_LOGE(TAG, "ShowJpeg: jd_prepare失败: %d", res);
-        heap_caps_free(work);
-        return;
-    }
-    int w = jd.width, h = jd.height;
-    ESP_LOGI(TAG, "解码JPEG尺寸: %d x %d", w, h);
-    static uint8_t* rgb565_buf = (uint8_t*)heap_caps_malloc(w * h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!rgb565_buf) {
-        ESP_LOGE(TAG, "ShowJpeg: 分配RGB565缓冲区失败");
-        heap_caps_free(work);
-        return;
-    }
-    io.buf = rgb565_buf;
-    io.w = w;
-    io.h = h;
-    res = jd_decomp(&jd, tjpgd_output_func, 0);
-    heap_caps_free(work);
-    if (res != JDR_OK) {
-        ESP_LOGE(TAG, "ShowJpeg: jd_decomp失败: %d", res);
-        heap_caps_free(rgb565_buf);
-        return;
-    }
-    swap_rgb565_bytes(rgb565_buf, w * h * 2);
-    static lv_img_dsc_t img_dsc;
-    img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-    img_dsc.header.w = w;
-    img_dsc.header.h = h;
-    img_dsc.data_size = w * h * 2;
-    // ESP_LOGI(TAG, "ShowJpeg: 图片大小=%d*%d", w, h);
-    img_dsc.data = rgb565_buf;
-    if (anim_img_obj_) {
-        DisplayLockGuard lock(this);
-        lv_img_set_src(anim_img_obj_, &img_dsc);
-    }
-    // 不要立即释放 rgb565_buf
-    // heap_caps_free(rgb565_buf);
-}
-
-void SpiLcdAnimDisplay::ShowRgb565(const uint8_t* buf, int w, int h) {
-    if (!buf || !anim_img_obj_) return;
-    // 分配一块缓冲区用于显示
-    static uint8_t* rgb565_buf = (uint8_t*)heap_caps_malloc(w * h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!rgb565_buf) return;
-    memcpy(rgb565_buf, buf, w * h * 2);
-    swap_rgb565_bytes(rgb565_buf, w * h * 2);
-    static lv_img_dsc_t img_dsc;
-    img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-    img_dsc.header.w = w;
-    img_dsc.header.h = h;
-    img_dsc.data_size = w * h * 2;
-    img_dsc.data = rgb565_buf;
-    {
-        DisplayLockGuard lock(this);
-        lv_img_set_src(anim_img_obj_, &img_dsc);
-    }
-    // heap_caps_free(rgb565_buf);
-}
-
-void SpiLcdAnimDisplay::CaptureAndShowPhoto() {
-    DisplayLockGuard lock(this);
-    CameraService::GetInstance().ShowPhotoToLvgl(anim_img_obj_);
-}
+    

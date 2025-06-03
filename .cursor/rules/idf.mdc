@@ -1,0 +1,128 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+
+
+Cursor Rules for IDF5.4+ESP32S3 Smart AI Project
+
+Project Configuration
+Environment Setup:
+
+ESP-IDF version: v5.4
+
+Target chip: ESP32-S3
+
+lvgl version:9.2
+
+Project repository: https://github.com/78/xiaozhi-esp32
+
+Code Navigation Rules
+Component Structure:
+
+Follow ESP-IDF component model structure
+
+Main components should be in /components directory
+
+Application code in /main directory
+IDF Version Specific:
+
+Always reference https://docs.espressif.com/projects/esp-idf/zh_CN/release-v5.4/esp32s3/index.html for API usage
+
+Note differences from previous IDF versions
+
+Coding Standards
+Style Guidelines:
+
+Follow ESP-IDF style guide (4 spaces indentation, K&R braces)
+
+Use descriptive variable names with Hungarian notation for types
+
+Comment complex logic with Doxygen-style comments
+Memory Management:
+
+Prefer heap_caps_* functions for memory allocation
+
+Always check return values of allocation functions
+
+Use ESP_ERROR_CHECK for critical operations
+Error Handling:
+
+Implement comprehensive error handling
+
+Use ESP_LOGE for error logging
+
+Include error recovery where possible
+
+AI-Specific Rules
+Model Integration:
+
+Store AI models in /components/models
+
+Use ESP-DL library for neural network operations
+
+Optimize models for ESP32-S3 hardware acceleration
+Performance:
+
+Profile AI inference timing
+
+Use ESP32-S3 vector instructions where applicable
+
+Implement power management for battery operation
+
+Development Workflow
+Component Management:
+
+Use https://components.espressif.com/ for dependencies
+
+Document all external components in README.md
+
+Freeze component versions for production builds
+Version Control:
+
+Branch naming: feature/<description>, bugfix/<issue>
+
+Commit messages should reference GitHub issues
+
+PRs require at least one review before merging
+Testing:
+
+Implement unit tests for critical components
+
+Use ESP-IDF test framework
+
+Document test cases in /tests directory
+
+Documentation
+Project Documentation:
+
+Maintain up-to-date README.md
+
+Document hardware requirements
+
+Include setup instructions for new developers
+API Documentation:
+
+Document public APIs with Doxygen
+
+Include usage examples
+
+Note any ESP32-S3 specific considerations
+
+Debugging Rules
+Logging:
+
+Use ESP_LOG* macros with appropriate log levels
+
+Tag logs with component name
+
+Implement runtime log level control
+Debug Tools:
+
+Use JTAG debugging where available
+
+Implement heap tracing for memory issues
+
+Use ESP-IDF monitor for serial debugging
+

@@ -40,11 +40,25 @@ public:
                 Parameter("index", "序号", kValueTypeNumber, true)
         }), [this](const ParameterList& parameters) {
             int index = static_cast<int>(parameters["index"].number());
-            // 这段代码有问题，"F"+index+".RAW" 这样写会把int和string拼接，结果是"F" + index的ASCII值 + ".RAW"
-            // 正确写法应该用std::to_string(index)转换为字符串
-            ShowRawImageFromSD("F" + std::to_string(index) + ".RAW", 240, 240);
             send_cmd_to_server(index);
+            if(index == 0)return;
+            ShowRawImageFromSD("F" + std::to_string(index) + ".RAW", 240, 240);
+            
         });
+        methods_.AddMethod("CloseImage", "关闭图片", ParameterList(), [this](const ParameterList& parameters) {
+            auto display = Board::GetInstance().GetDisplay();
+            if (display && display->HasCanvas()) {
+                display->DestroyCanvas();
+                ESP_LOGI(TAG, "已关闭画布显示");
+            }
+        });
+        methods_.AddMethod("DelayCloseCanvas", "延时关闭画布", ParameterList({
+            Parameter("delay_ms", "延迟毫秒数", kValueTypeNumber, true)
+        }), [this](const ParameterList& parameters) {
+            int delay_ms = static_cast<int>(parameters["delay_ms"].number());
+            CreateDestroyCanvasTask(Board::GetInstance().GetDisplay(), delay_ms);
+        });
+    
     }
 // 发送照片到服务器
     bool send_cmd_to_server(int cmd) {
@@ -61,7 +75,8 @@ public:
         // 发送命令---使用发送照片的通道
         // 检查：SendIotCameraPhoto的参数含义是否正确？第一个参数"cmd"是否为命令类型？0,0是否为图片相关参数？cmd为要发送的命令字符串
         // std::vector<uint8_t> cmd_data(cmd.begin(), cmd.end());
-        std::vector<uint8_t> cmd_data(cmd);
+        std::vector<uint8_t> cmd_data(1);
+        cmd_data[0] = 1;
         protocol->SendIotCameraPhoto(cmd_data, cmd, cmd, "cmd");
         
         // auto display = Board::GetInstance().GetDisplay();
@@ -209,13 +224,70 @@ public:
         display->DrawImageOnCanvas(0, 0, width, height, rgb565_data);
         ESP_LOGI(TAG, "raw RGB565图片显示成功: %s", full_path.c_str());
 
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        if (display->HasCanvas()) {
-            display->DestroyCanvas();
-            ESP_LOGI(TAG, "已关闭画布显示");
+        if(image_path == "F3.RAW"  ){            
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        ShowRawImageFromSD("F4.RAW", 240, 240);
+        // vTaskDelay(pdMS_TO_TICKS(5000));
+        // if (display->HasCanvas()) {
+        //     display->DestroyCanvas();
+        //     ESP_LOGI(TAG, "已关闭画布显示");
+        // }
+        
+         // 使用多线程方式延迟销毁画布
+        auto destroy_canvas_task = [](void* param) {
+            auto display = static_cast<LcdDisplay*>(param);
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            if (display && display->HasCanvas()) {
+                display->DestroyCanvas();
+                ESP_LOGI(TAG, "已关闭画布显示");
+            }
+            vTaskDelete(NULL);
+        };
+        // 创建新任务执行延迟销毁
+        xTaskCreate(
+            destroy_canvas_task,      // 任务函数
+            "DestroyCanvasTask",      // 任务名称
+            4096,                     // 堆栈大小
+            display,                  // 传递display指针
+            5,                        // 优先级
+            NULL                      // 任务句柄
+        );
         }
         heap_caps_free(rgb565_data);
     }
+    // 延迟销毁画布
+    struct CanvasDelayParam {
+        LcdDisplay* display;
+        int delay_ms;
+    };
+    static void DestroyCanvasDelay(void* param) {
+        auto* delay_param = static_cast<CanvasDelayParam*>(param);
+        auto display = delay_param->display;
+        int delay_ms = delay_param->delay_ms;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        if (display && display->HasCanvas()) {  
+            display->DestroyCanvas();
+            ESP_LOGI(TAG, "已关闭画布显示");
+        }
+        free(delay_param);
+        vTaskDelete(NULL);
+    }
+    // 创建新任务执行延迟销毁
+    static void CreateDestroyCanvasTask(void* display_param, int delay_ms) {
+        auto* param = (CanvasDelayParam*)malloc(sizeof(CanvasDelayParam));
+        param->display = static_cast<LcdDisplay*>(display_param);
+        param->delay_ms = delay_ms;
+        xTaskCreate(
+            DestroyCanvasDelay,      // 任务函数
+            "DestroyCanvasTask",      // 任务名称
+            4096,                     // 堆栈大小
+            param,                  // 传递结构体指针      
+            5,                        // 优先级
+            NULL                      // 任务句柄
+        );
+    }
+
 };
 
 } // namespace iot
