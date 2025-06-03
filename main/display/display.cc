@@ -364,5 +364,5 @@ void Display::DrawImageOnCanvas(int x, int y, int width, int height, const uint8
     // 确保画布在最上层
     lv_obj_move_foreground(canvas_);
     
-    ESP_LOGI("Display", "Image drawn on canvas at x=%d, y=%d, w=%d, h=%d", x, y, width, height);
+    // ESP_LOGI("Display", "Image drawn on canvas at x=%d, y=%d, w=%d, h=%d", x, y, width, height);
 }

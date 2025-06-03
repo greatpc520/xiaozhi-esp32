@@ -72,17 +72,17 @@ static size_t image_buffer_size = 0;
 #define LIGHT_LOW_BATTERY_COLOR      lv_color_black()           // Black for light mode
 
 // Theme color structure
-struct ThemeColors {
-    lv_color_t background;
-    lv_color_t text;
-    lv_color_t chat_background;
-    lv_color_t user_bubble;
-    lv_color_t assistant_bubble;
-    lv_color_t system_bubble;
-    lv_color_t system_text;
-    lv_color_t border;
-    lv_color_t low_battery;
-};
+// struct ThemeColors {
+//     lv_color_t background;
+//     lv_color_t text;
+//     lv_color_t chat_background;
+//     lv_color_t user_bubble;
+//     lv_color_t assistant_bubble;
+//     lv_color_t system_bubble;
+//     lv_color_t system_text;
+//     lv_color_t border;
+//     lv_color_t low_battery;
+// };
 // Define dark theme colors
 static const ThemeColors DARK_THEME = {
     .background = DARK_BACKGROUND_COLOR,
@@ -1034,14 +1034,14 @@ bool decodePngImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
     ESP_LOGI(TAG, "Decoding PNG image...");
     
     std::vector<unsigned char> image;
-    
+
     try {
         // 检查基本数据有效性
         if (image_buffer_size < 8 || !httpbuffer) {
             ESP_LOGE(TAG, "Insufficient data for PNG: %zu bytes", image_buffer_size);
             if (httpbuffer) {
-                heap_caps_free(httpbuffer);
-                httpbuffer = NULL;
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
             }
             return false;
         }
@@ -1082,8 +1082,8 @@ bool decodePngImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
         unsigned error = lodepng::decode(image, width, height, state, httpbuffer, image_buffer_size);
 
         // 释放下载缓冲区
-        heap_caps_free(httpbuffer);
-        httpbuffer = NULL;
+            heap_caps_free(httpbuffer);
+            httpbuffer = NULL;
         
         if (error) {
             ESP_LOGE(TAG, "Error decoding PNG: %s", lodepng_error_text(error));
@@ -1095,8 +1095,8 @@ bool decodePngImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
     } catch (const std::exception &e) {
         ESP_LOGE(TAG, "Exception during PNG decoding: %s", e.what());
         if (httpbuffer) {
-            heap_caps_free(httpbuffer);
-            httpbuffer = NULL;
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
         }
         return false;
     }
@@ -1170,11 +1170,11 @@ bool decodeJpgImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
         if (image_buffer_size < 4 || !httpbuffer) {
             ESP_LOGE(TAG, "Insufficient data for JPG: %zu bytes", image_buffer_size);
             if (httpbuffer) {
-                heap_caps_free(httpbuffer);
-                httpbuffer = NULL;
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
             }
-            return false;
-        }
+        return false;
+    }
 
         // 打印前几个字节用于调试
         ESP_LOGI(TAG, "JPG file header: 0x%02X 0x%02X 0x%02X 0x%02X (size: %zu)", 
@@ -1184,10 +1184,10 @@ bool decodeJpgImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
         if (httpbuffer[0] != 0xFF || httpbuffer[1] != 0xD8) {
             ESP_LOGE(TAG, "Invalid JPG header: expected FF D8, got %02X %02X", 
                      httpbuffer[0], httpbuffer[1]);
-            heap_caps_free(httpbuffer);
-            httpbuffer = NULL;
-            return false;
-        }
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
+        return false;
+    }
 
         ESP_LOGI(TAG, "Valid JPG header detected");
 
@@ -1196,10 +1196,10 @@ bool decodeJpgImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
         uint8_t* work_buffer = (uint8_t*)heap_caps_malloc(work_size, MALLOC_CAP_INTERNAL);
         if (!work_buffer) {
             ESP_LOGE(TAG, "Failed to allocate TJPGD work buffer");
-            heap_caps_free(httpbuffer);
-            httpbuffer = NULL;
-            return false;
-        }
+        heap_caps_free(httpbuffer);
+        httpbuffer = NULL;
+        return false;
+    }
 
         // 设置解码上下文
         JpegDecodeContext decode_ctx;
@@ -1217,8 +1217,8 @@ bool decodeJpgImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height) {
         if (res != JDR_OK) {
             ESP_LOGE(TAG, "TJPGD prepare failed: %d", res);
             heap_caps_free(work_buffer);
-            heap_caps_free(httpbuffer);
-            httpbuffer = NULL;
+    heap_caps_free(httpbuffer);
+    httpbuffer = NULL;
             return false;
         }
 
@@ -1365,7 +1365,7 @@ bool convertToRgb565A8(const std::vector<unsigned char>& image_rgba, unsigned wi
     if (has_alpha) {
         rgb565a8_size = width * height * (sizeof(uint16_t) + sizeof(uint8_t)); // RGB565 + A8
         img_desc.header.cf = LV_COLOR_FORMAT_RGB565A8;
-    } else {
+                    } else {
         rgb565a8_size = width * height * sizeof(uint16_t); // 仅RGB565
         img_desc.header.cf = LV_COLOR_FORMAT_RGB565;
     }
@@ -1467,8 +1467,8 @@ void SpiLcdAnimDisplay::SetEmotion(const char* emotion) {
         DownloadImageParams* params = (DownloadImageParams*)malloc(sizeof(DownloadImageParams));
         if (!params) {
             ESP_LOGE(TAG, "Failed to allocate memory for download params");
-            return;
-        }
+        return;
+    }
         
         // 复制URL字符串
         params->url = strdup(emotion);
@@ -1496,4 +1496,3 @@ void SpiLcdAnimDisplay::SetEmotion(const char* emotion) {
         // LcdDisplay::SetEmotion(emotion);
     }
 }
-    

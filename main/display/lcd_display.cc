@@ -145,11 +145,11 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     }
 
     // Update the theme
-    if (current_theme_name_ == "dark") {
-        current_theme = DARK_THEME;
-    } else if (current_theme_name_ == "light") {
-        current_theme = LIGHT_THEME;
-    }
+    // if (current_theme_name_ == "dark") {
+    //     current_theme = DARK_THEME;
+    // } else if (current_theme_name_ == "light") {
+    //     current_theme = LIGHT_THEME;
+    // }
 
     // SetupUI();
 }
@@ -215,11 +215,11 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     }
 
     // Update the theme
-    if (current_theme_name_ == "dark") {
-        current_theme = DARK_THEME;
-    } else if (current_theme_name_ == "light") {
-        current_theme = LIGHT_THEME;
-    }
+    // if (current_theme_name_ == "dark") {
+    //     current_theme = DARK_THEME;
+    // } else if (current_theme_name_ == "light") {
+    //     current_theme = LIGHT_THEME;
+    // }
 
     // SetupUI();//mc
 }

@@ -437,7 +437,7 @@ private:
     }
 
       // 摄像头硬件初始化
-    void InitializeCamera(void)
+    void InitializeCamera_mc(void)
     {
 
         camera_config_t config;
@@ -492,7 +492,7 @@ public:
         InitCst816d();
         InitializeTca9554();
         InitPcf8574();
-        InitializeCamera();
+        // InitializeCamera();
         InitializeSpi();
         InitializeButtons();
         #ifdef LCD_TYPE_ILI9341_SERIAL
@@ -500,7 +500,7 @@ public:
         #else
         InitializeSt7789Display(); 
         #endif
-        // InitializeCamera();
+        // InitializeCamera_mc();
         InitializeIot();
         
     }
