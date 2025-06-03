@@ -1005,7 +1005,7 @@ void Application::SetDeviceState(DeviceState state) {
         case kDeviceStateListening:
             // display->SetStatus(Lang::Strings::LISTENING);
             display->SetStatus("");
-            display->SetEmotion("neutral");
+            // display->SetEmotion("neutral");
             // Update the IoT states before sending the start listening command
 #if CONFIG_IOT_PROTOCOL_XIAOZHI
             UpdateIotStates();
