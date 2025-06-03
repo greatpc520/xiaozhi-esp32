@@ -9,6 +9,7 @@
 
 #include "led/led.h"
 #include "backlight.h"
+#include "camera.h"
 
 #include "pcf8574.h"
 
@@ -41,6 +42,7 @@ public:
     virtual AudioCodec* GetAudioCodec() = 0;
     virtual bool GetTemperature(float& esp32temp);
     virtual Display* GetDisplay();
+    virtual Camera* GetCamera();
     virtual Http* CreateHttp() = 0;
     virtual WebSocket* CreateWebSocket() = 0;
     virtual Mqtt* CreateMqtt() = 0;
