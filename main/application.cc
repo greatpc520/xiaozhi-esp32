@@ -12,6 +12,7 @@
 // #include "camera_service.h"
 // #include "display/spi_lcd_anim_display.h"
 #include "mcp_server.h"
+#include "audio_debugger.h"
 
 #if CONFIG_USE_AUDIO_PROCESSOR
 #include "afe_audio_processor.h"
@@ -337,9 +338,11 @@ void Application::ToggleChatState() {
 
         if (device_state_ == kDeviceStateIdle) {
         Schedule([this]() {
-            SetDeviceState(kDeviceStateConnecting);
-            if (!protocol_->OpenAudioChannel()) {
-                return;
+            if (!protocol_->IsAudioChannelOpened()) {
+                SetDeviceState(kDeviceStateConnecting);
+                if (!protocol_->OpenAudioChannel()) {
+                    return;
+                }
             }
 
             SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
@@ -640,8 +643,16 @@ void Application::Start() {
     });
     bool protocol_started = protocol_->Start();
 
+    audio_debugger_ = std::make_unique<AudioDebugger>();
     audio_processor_->Initialize(codec);
     audio_processor_->OnOutput([this](std::vector<int16_t>&& data) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (audio_send_queue_.size() >= MAX_AUDIO_PACKETS_IN_QUEUE) {
+                ESP_LOGW(TAG, "Too many audio packets in queue, drop the newest packet");
+                return;
+            }
+        }
         background_task_->Schedule([this, data = std::move(data)]() mutable {
             opus_encoder_->Encode(std::move(data), [this](std::vector<uint8_t>&& opus) {
                 AudioStreamPacket packet;
@@ -796,6 +807,9 @@ void Application::Schedule(std::function<void()> callback) {
 // If other tasks need to access the websocket or chat state,
 // they should use Schedule to call this function
 void Application::MainEventLoop() {
+    // Raise the priority of the main event loop to avoid being interrupted by background tasks (which has priority 2)
+    vTaskPrioritySet(NULL, 3);
+
     // 注册当前任务到 WDT
     // esp_task_wdt_add(NULL); // NULL 表示当前任务
     while (true) {
@@ -955,6 +969,12 @@ bool Application::ReadAudio(std::vector<int16_t>& data, int sample_rate, int sam
             return false;
         }
     }
+    
+    // 音频调试：发送原始音频数据
+    if (audio_debugger_) {
+        audio_debugger_->Feed(data);
+    }
+    
     return true;
 }
 
