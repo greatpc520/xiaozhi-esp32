@@ -62,7 +62,7 @@ private:
 // #define CAMERA_PIN_PCLK 11
 
 // #define XCLK_FREQ_HZ 24000000
-
+camera_is_init = true;
         if (camera_is_init) {
             return;
         }
@@ -114,6 +114,7 @@ private:
 
     //释放摄像头资源，反初始化涉嫌头
     void deinit_camera(void) {
+        return;
         // if (last_captured_photo) {
         //     esp_camera_fb_return(last_captured_photo);
         //     last_captured_photo = NULL;

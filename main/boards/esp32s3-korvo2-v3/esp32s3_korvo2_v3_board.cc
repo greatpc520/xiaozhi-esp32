@@ -500,7 +500,7 @@ public:
         #else
         InitializeSt7789Display(); 
         #endif
-        // InitializeCamera_mc();
+        InitializeCamera_mc();
         InitializeIot();
         
     }
