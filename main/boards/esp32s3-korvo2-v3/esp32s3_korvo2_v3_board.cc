@@ -18,9 +18,9 @@
 #include "pcf8574.h"
 #include "file_manager.h"
 
-#include "camera_service.h"
+// #include "camera_service.h"
 // #include "display/spi_lcd_anim_display.h"
-#include "esp_camera.h"
+// #include "esp_camera.h"
 #include <esp_lvgl_port.h>
 #include <lvgl.h>
 #include "esp32_camera.h"
@@ -373,7 +373,7 @@ private:
         config.pin_reset = CAMERA_PIN_RESET;
         config.xclk_freq_hz = XCLK_FREQ_HZ;
         config.pixel_format = PIXFORMAT_RGB565;
-        config.frame_size = FRAMESIZE_VGA;
+        config.frame_size = FRAMESIZE_240X240;//FRAMESIZE_VGA;
         config.jpeg_quality = 12;
         config.fb_count = 1;
         config.fb_location = CAMERA_FB_IN_PSRAM;
@@ -386,7 +386,7 @@ private:
         auto& thing_manager = iot::ThingManager::GetInstance();
         thing_manager.AddThing(iot::CreateThing("Speaker"));
         thing_manager.AddThing(iot::CreateThing("Chassis"));
-        thing_manager.AddThing(iot::CreateThing("Camera"));
+        // thing_manager.AddThing(iot::CreateThing("Camera"));
         thing_manager.AddThing(iot::CreateThing("ImageDisplayer"));
     }
 
@@ -403,37 +403,14 @@ private:
     }
     void init_camera1()
     {
-    //   CameraService::GetInstance().Init();
-    // 启动实时预览，将摄像头帧显示到屏幕
-    // CameraService::GetInstance().StartPreview([](int w, int h, const uint8_t* buf, size_t len) {
-    //     // 假设主板用的是SpiLcdAnimDisplay
-    //     // auto* display = static_cast<SpiLcdAnimDisplay*>(Board::GetInstance().GetDisplay());
-    //     if (display) {
-    //         display_->ShowRgb565Frame(buf, w, h); // 你需要在SpiLcdAnimDisplay中实现ShowRgb565Frame
-    //         // vTaskDelay(pdMS_TO_TICKS(40));
-    //         // ESP_LOGI(TAG,  "ShowRgb565Frame");
-    //     }else{
-    //         ESP_LOGE(TAG, "Display is NULL");
-    //     }
-    // });
-
-    
-   int w = 0, h = 0;
-    size_t buf_size = 240 * 240 * 2;
-    static uint8_t* buf = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (CameraService::GetInstance().TakePhotoRgb565ToBuffer(buf, buf_size, w, h)) {
-        static_cast<SpiLcdAnimDisplay*>(display_)->ShowRgb565(buf, w, h);
-    }
-    // heap_caps_free(buf);
-
-// 传入LVGL图片控件指针，自动拍照、JPEG转RGB888并显示    
-    // if (display_) {
-    //     auto* anim_display = static_cast<SpiLcdAnimDisplay*>(display_);
-    //     if (anim_display) {
-    //         anim_display->CaptureAndShowPhoto();
-    //     }
-    // }
-    
+   
+//    int w = 0, h = 0;
+//     size_t buf_size = 240 * 240 * 2;
+//     static uint8_t* buf = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+//     if (CameraService::GetInstance().TakePhotoRgb565ToBuffer(buf, buf_size, w, h)) {
+//         static_cast<SpiLcdAnimDisplay*>(display_)->ShowRgb565(buf, w, h);
+//     }
+  
     }
 
       // 摄像头硬件初始化
@@ -492,7 +469,7 @@ public:
         InitCst816d();
         InitializeTca9554();
         InitPcf8574();
-        // InitializeCamera();
+        InitializeCamera();
         InitializeSpi();
         InitializeButtons();
         #ifdef LCD_TYPE_ILI9341_SERIAL
@@ -500,7 +477,7 @@ public:
         #else
         InitializeSt7789Display(); 
         #endif
-        InitializeCamera_mc();
+        // InitializeCamera_mc();
         InitializeIot();
         
     }

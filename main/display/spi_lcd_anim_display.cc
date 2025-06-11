@@ -269,7 +269,7 @@ SpiLcdAnimDisplay::SpiLcdAnimDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd
     role_id_ = 0;
     anim_img_obj_ = nullptr;
     current_state_ = "idle";
-    SetupUI();
+    SpiLcdDisplay::SetupUI();
 }
 
 void SpiLcdAnimDisplay::SetupUI()
@@ -561,6 +561,8 @@ void SpiLcdAnimDisplay::StartAnim()
 {
     if (frame_count_ <= 0)
         return;
+    if (anim_img_obj_  == nullptr)return;
+        
     StopAnim();
     vTaskDelay(pdMS_TO_TICKS(100));
     // lv_anim_init(&anim_);
@@ -581,6 +583,7 @@ void SpiLcdAnimDisplay::StartAnim()
 
 void SpiLcdAnimDisplay::StopAnim()
 {
+    if (anim_img_obj_  == nullptr)return;
     lv_anim_del(anim_img_obj_, nullptr);
     ESP_LOGI(TAG, "StopAnim: %s", current_state_.c_str());
 }

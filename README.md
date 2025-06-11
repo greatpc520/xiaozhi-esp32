@@ -1,6 +1,6 @@
 # An MCP-based Chatbot | 一个基于 MCP 的聊天机器人
 git push xiaozhiesp32s3 main
-   git push xiaozhiesp32s3 refs/heads/main:refs/heads/main
+git push xiaozhiesp32s3 refs/heads/main:refs/heads/main
 （中文 | [English](README_en.md) | [日本語](README_ja.md)）
 
 ## 视频
