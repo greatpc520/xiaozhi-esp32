@@ -269,7 +269,8 @@ SpiLcdAnimDisplay::SpiLcdAnimDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd
     role_id_ = 0;
     anim_img_obj_ = nullptr;
     current_state_ = "idle";
-    SpiLcdDisplay::SetupUI();
+    // SpiLcdDisplay::SetupUI();
+    SetupUI();
 }
 
 void SpiLcdAnimDisplay::SetupUI()
@@ -418,8 +419,12 @@ void SpiLcdAnimDisplay::SetupUI()
     // LoadFrames();
     LoadIdleRaw(std::string("/sdcard/1/standby"));
     // ShowIdleImage();
-    // SetRoleId(1);
+    SetRoleId(1);
     // SetAnimState("idle");
+     lv_async_call([](void* param){
+            SpiLcdAnimDisplay* self = static_cast<SpiLcdAnimDisplay*>(param);
+            self->ShowIdleImage();
+        }, this);
 
     ESP_LOGI(TAG, "SetupUI: %s", current_state_.c_str());
     // StartFrameQueueTask();
@@ -450,6 +455,7 @@ void SpiLcdAnimDisplay::SetAnimState(const std::string &state)
     //     return;
     // }
     // last_change_time = now;
+    //  ESP_LOGI(TAG, "SetAnimState: %s",state.c_str());
     if (state == current_state_)
         return;
     // StopAnim();
@@ -489,7 +495,7 @@ void SpiLcdAnimDisplay::SetAnimState(const std::string &state)
             if (self) self->OnFramesLoaded(); }, this);
     }
 
-    ESP_LOGI(TAG, "SetAnimState: %s", current_state_.c_str());
+    ESP_LOGI(TAG, "SetAnimStated: %s", current_state_.c_str());
 }
 
 void SpiLcdAnimDisplay::LoadFrames()

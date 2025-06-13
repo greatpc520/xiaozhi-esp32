@@ -320,49 +320,119 @@ void Display::DrawImageOnCanvas(int x, int y, int width, int height, const uint8
         ESP_LOGE("Display", "Canvas not created");
         return;
     }
-    
-    // 检查参数是否有效
-    if (x < 0 || y < 0 || (x + width) > width_ || (y + height) > height_) {
-        ESP_LOGE("Display", "Invalid coordinates: x=%d, y=%d, w=%d, h=%d, screen: %dx%d", 
-                x, y, width, height, width_, height_);
+
+    // 目标显示区域
+    const int target_dim = 240;
+    int crop_x = 0, crop_y = 0, crop_w = width, crop_h = height;
+    // 居中裁剪为正方形
+    if (width > height) {
+        crop_w = height;
+        crop_x = (width - crop_w) / 2;
+        crop_y = 0;
+        crop_h = height;
+    } else if (height > width) {
+        crop_h = width;
+        crop_y = (height - crop_h) / 2;
+        crop_x = 0;
+        crop_w = width;
+    }
+    // 现在裁剪区域是crop_x, crop_y, crop_w, crop_h，且crop_w==crop_h
+
+    // 分配缩放后buffer
+    uint8_t* scaled_buf = (uint8_t*)heap_caps_malloc(target_dim * target_dim * 2, MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+    if (!scaled_buf) {
+        ESP_LOGE("Display", "Failed to alloc scale buffer");
         return;
     }
-    
+    // 双线性插值缩放RGB565
+    const uint16_t* src = (const uint16_t*)img_data;
+    uint16_t* dst = (uint16_t*)scaled_buf;
+    float scale = (float)crop_w / target_dim;
+    for (int j = 0; j < target_dim; ++j) {
+        float src_yf = crop_y + (j + 0.5f) * scale - 0.5f;
+        int y0 = (int)src_yf;
+        int y1 = y0 + 1;
+        float wy = src_yf - y0;
+        if (y1 >= crop_y + crop_h) y1 = crop_y + crop_h - 1;
+        for (int i = 0; i < target_dim; ++i) {
+            float src_xf = crop_x + (i + 0.5f) * scale - 0.5f;
+            int x0 = (int)src_xf;
+            int x1 = x0 + 1;
+            float wx = src_xf - x0;
+            if (x1 >= crop_x + crop_w) x1 = crop_x + crop_w - 1;
+            // 取四个点
+            uint16_t c00 = src[y0 * width + x0];
+            uint16_t c10 = src[y0 * width + x1];
+            uint16_t c01 = src[y1 * width + x0];
+            uint16_t c11 = src[y1 * width + x1];
+            // 分别拆分RGB565
+            auto unpack = [](uint16_t c, int& r, int& g, int& b) {
+                r = (c >> 11) & 0x1F;
+                g = (c >> 5) & 0x3F;
+                b = c & 0x1F;
+            };
+            int r00, g00, b00, r10, g10, b10, r01, g01, b01, r11, g11, b11;
+            unpack(c00, r00, g00, b00);
+            unpack(c10, r10, g10, b10);
+            unpack(c01, r01, g01, b01);
+            unpack(c11, r11, g11, b11);
+            // 双线性插值
+            float r0 = r00 * (1 - wx) + r10 * wx;
+            float r1 = r01 * (1 - wx) + r11 * wx;
+            float r = r0 * (1 - wy) + r1 * wy;
+            float g0 = g00 * (1 - wx) + g10 * wx;
+            float g1 = g01 * (1 - wx) + g11 * wx;
+            float g = g0 * (1 - wy) + g1 * wy;
+            float b0 = b00 * (1 - wx) + b10 * wx;
+            float b1 = b01 * (1 - wx) + b11 * wx;
+            float b = b0 * (1 - wy) + b1 * wy;
+            // 合成RGB565
+            int ri = (int)(r + 0.5f);
+            int gi = (int)(g + 0.5f);
+            int bi = (int)(b + 0.5f);
+            if (ri > 31) ri = 31;
+            if (gi > 63) gi = 63;
+            if (bi > 31) bi = 31;
+            dst[j * target_dim + i] = (ri << 11) | (gi << 5) | bi;
+        }
+    }
+    // 检查参数是否有效
+    if (x < 0 || y < 0 || (x + target_dim) > width_ || (y + target_dim) > height_) {
+        ESP_LOGE("Display", "Invalid coordinates: x=%d, y=%d, w=%d, h=%d, screen: %dx%d", 
+                x, y, target_dim, target_dim, width_, height_);
+        heap_caps_free(scaled_buf);
+        return;
+    }
     // 创建一个描述器来映射图像数据
     const lv_image_dsc_t img_dsc = {
         .header = {
             .magic = LV_IMAGE_HEADER_MAGIC,
             .cf = LV_COLOR_FORMAT_RGB565,
             .flags = 0,
-            .w = (uint32_t)width,
-            .h = (uint32_t)height,
-            .stride = (uint32_t)(width * 2),  // RGB565: 2 bytes per pixel
+            .w = (uint32_t)target_dim,
+            .h = (uint32_t)target_dim,
+            .stride = (uint32_t)(target_dim * 2),  // RGB565: 2 bytes per pixel
             .reserved_2 = 0,
         },
-        .data_size = (uint32_t)(width * height * 2),  // RGB565: 2 bytes per pixel
-        .data = img_data,
+        .data_size = (uint32_t)(target_dim * target_dim * 2),  // RGB565: 2 bytes per pixel
+        .data = scaled_buf,
         .reserved = NULL
     };
-    
     // 使用图层绘制图像到画布上
     lv_layer_t layer;
     lv_canvas_init_layer(canvas_, &layer);
-    
     lv_draw_image_dsc_t draw_dsc;
     lv_draw_image_dsc_init(&draw_dsc);
     draw_dsc.src = &img_dsc;
-    
     lv_area_t area;
     area.x1 = x;
     area.y1 = y;
-    area.x2 = x + width - 1;
-    area.y2 = y + height - 1;
-    
+    area.x2 = x + target_dim - 1;
+    area.y2 = y + target_dim - 1;
     lv_draw_image(&layer, &draw_dsc, &area);
     lv_canvas_finish_layer(canvas_, &layer);
-    
     // 确保画布在最上层
     lv_obj_move_foreground(canvas_);
-    
-    // ESP_LOGI("Display", "Image drawn on canvas at x=%d, y=%d, w=%d, h=%d", x, y, width, height);
+    heap_caps_free(scaled_buf);
+    // ESP_LOGI("Display", "Image drawn on canvas at x=%d, y=%d, w=%d, h=%d", x, y, target_dim, target_dim);
 }

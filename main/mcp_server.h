@@ -276,6 +276,11 @@ private:
 
     std::vector<McpTool*> tools_;
     std::thread tool_call_thread_;
+
+    void set_backlight_impl(uint8_t brightness);
+    void set_led_impl(uint8_t brightness);
+    void control_motor_impl(uint8_t motorid, int steps, bool direction);
+    void play_music_impl(int file_number);
 };
 
 #endif // MCP_SERVER_H

@@ -250,4 +250,4 @@ public:
 
 } // namespace iot
 
-DECLARE_THING(Chassis);
+DECLARE_THING(Chassis); 

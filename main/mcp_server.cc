@@ -9,13 +9,16 @@
 #include <algorithm>
 #include <cstring>
 #include <esp_pthread.h>
+#include <dirent.h>
+#include <fstream>
 
 #include "application.h"
 #include "display.h"
 #include "board.h"
 
 #define TAG "MCP"
-
+#define MOUNT_POINT "/sdcard"
+#define AUDIO_FILE_EXTENSION ".P3"
 #define DEFAULT_TOOLCALL_STACK_SIZE 6144
 
 McpServer::McpServer() {
@@ -103,7 +106,65 @@ void McpServer::AddCommonTools() {
             });
     }
 
-    // Restore the original tools list to the end of the tools list
+   
+
+    // Add Chassis related tools
+    AddTool("motorReset", "复位终端", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        printf("control_motor reset.\r\n");
+        control_motor_impl(0,343,0);control_motor_impl(0,171,1);
+        control_motor_impl(1,200,0);control_motor_impl(1,100,1);
+        printf("control_motor reset ok.\r\n");
+        return true;
+    });
+    AddTool("GoForward", "向上转", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        control_motor_impl(1, 30, true);
+        return true;
+    });
+
+    AddTool("GoBack", "向下转", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        control_motor_impl(1, 30, false);
+        return true;
+    });
+
+    AddTool("TurnLeft", "向左转", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        control_motor_impl(0, 30, false);
+        return true;
+    });
+
+    AddTool("TurnRight", "向右转", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        control_motor_impl(0, 30, true);
+        return true;
+    });
+
+    AddTool("BlOff", "打开屏幕", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        set_backlight_impl(0);
+        return true;
+    });
+
+    AddTool("BlOn", "关闭屏幕", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        set_backlight_impl(1);
+        return true;
+    });
+    
+    AddTool("TurnOn", "打开灯", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        set_led_impl(0);
+        return true;
+    });
+
+    AddTool("TurnOff", "关闭灯", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        set_led_impl(1);
+        return true;
+    });
+    AddTool("sysReset", "系统重启", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        esp_restart();
+        return true;
+    });
+    AddTool("PlayMusic", "播放本地音乐", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
+        play_music_impl(0);
+        return true;
+    });
+
+     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
 }
 
@@ -364,4 +425,84 @@ void McpServer::DoToolCall(int id, const std::string& tool_name, const cJSON* to
         }
     });
     tool_call_thread_.detach();
+}void McpServer::set_backlight_impl(uint8_t brightness)
+{
+    auto& board = Board::GetInstance();
+    auto motor = board.SetMotor();
+    uint8_t level=0;
+    if(brightness>0)level=1;
+    motor->setbl(level);
+}void McpServer::set_led_impl(uint8_t brightness)
+{
+    auto& board = Board::GetInstance();
+    auto motor = board.SetMotor();
+    uint8_t level=0;
+    if(brightness>0)level=1;
+    motor->setled(level);
 }
+
+void McpServer::control_motor_impl(uint8_t motorid, int steps, bool direction)
+{
+    auto& board = Board::GetInstance();
+    auto motor = board.SetMotor();
+    motor->control_motor(motorid, steps, direction);
+}
+
+void McpServer::play_music_impl(int file_number)
+{
+    DIR *dir = opendir(MOUNT_POINT);
+    if (dir == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to open directory: %s", MOUNT_POINT);
+        return;
+    }
+    struct dirent *entry;
+    std::vector<std::string> audio_files; // 用来存储符合条件的音频文件
+    while ((entry = readdir(dir)) != NULL)
+    {
+        if (strstr(entry->d_name, AUDIO_FILE_EXTENSION))
+        {
+            audio_files.push_back(entry->d_name);
+        }
+        ESP_LOGE(TAG, " file name: %s", entry->d_name);
+    }
+    ESP_LOGE(TAG, " file number: %d", audio_files.size());
+    closedir(dir);
+    if (audio_files.empty())
+    {
+        ESP_LOGE(TAG, "No valid audio file found.");
+        return;
+    }
+    if (file_number < 0 || file_number >= audio_files.size())
+    {
+        ESP_LOGE(TAG, "Invalid file number: %d", file_number);
+        return;
+    }
+    char file_path[512];
+    snprintf(file_path, sizeof(file_path), "%s/%s", MOUNT_POINT, audio_files[file_number].c_str());
+    auto &app = Application::GetInstance();
+    auto codec = Board::GetInstance().GetAudioCodec();
+    ESP_LOGI(TAG, "Playing file: %s", file_path);
+    std::ifstream file(file_path, std::ios::binary);
+    if (!file.is_open())
+    {
+        ESP_LOGE(TAG, "Failed to open file: %s", file_path);
+        return;
+    }
+    file.seekg(0, std::ios::end);
+    size_t size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<char> file_data(size);
+    file.read(file_data.data(), size);
+    if (!file)
+    {
+        ESP_LOGE(TAG, "Failed to read the entire file: %s", file_path);
+        return;
+    }
+    std::string_view sound_view(file_data.data(), file_data.size());
+    app.PlaySound(sound_view);
+    ESP_LOGI(TAG, "File %s played successfully", file_path);
+}
+
+
+

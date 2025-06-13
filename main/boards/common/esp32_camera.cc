@@ -31,6 +31,22 @@ Esp32Camera::Esp32Camera(const camera_config_t& config) {
     preview_image_.header.flags = LV_IMAGE_FLAGS_ALLOCATED | LV_IMAGE_FLAGS_MODIFIABLE;
 
     switch (config.frame_size) {
+        // case FRAMESIZE_UXGA:
+        //     preview_image_.header.w = 1600;
+        //     preview_image_.header.h = 1200;
+        //     break;
+        // case FRAMESIZE_SXGA:
+        //     preview_image_.header.w = 1280;
+        //     preview_image_.header.h = 1024;
+        //     break;
+        // case FRAMESIZE_XGA:
+        //     preview_image_.header.w = 1024;
+        //     preview_image_.header.h = 768;
+        //     break;
+        // case FRAMESIZE_HD:
+        //     preview_image_.header.w = 1280;
+        //     preview_image_.header.h = 720;
+            // break;
         case FRAMESIZE_SVGA:
             preview_image_.header.w = 800;
             preview_image_.header.h = 600;
