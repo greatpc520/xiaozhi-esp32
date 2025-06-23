@@ -55,6 +55,15 @@ public:
     virtual std::string GetBoardJson() = 0;
     virtual Pcf8574* SetMotor() { return nullptr; }
     virtual std::string GetDeviceStatusJson() = 0;
+    
+    // 时钟界面相关接口
+    virtual void ShowClock() { /* 默认空实现 */ }
+    virtual void HideClock() { /* 默认空实现 */ }
+    virtual bool IsClockVisible() const { return false; }
+    
+    // RTC时钟相关接口
+    virtual bool InitializeRtcClock() { return false; }
+    virtual void SyncTimeOnBoot() { /* 默认空实现 */ }
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \

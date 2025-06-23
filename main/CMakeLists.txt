@@ -26,6 +26,12 @@ set(SOURCES "audio_codecs/audio_codec.cc"
             "settings.cc"
             "background_task.cc"
             "camera_service.cc"
+            "clock_ui.cc"
+            "alarm_manager.cc"
+            "alarm_mcp_tools.cc"
+            "time_sync_manager.cc"
+            "pcf8563_rtc.cc"
+            "ntp_sync.cc"
             "main.cc"
             )
 
@@ -246,6 +252,7 @@ endif()
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
+                    # REQUIRES bt freertos http_parser json spi_driver lvgl fatfs
                     WHOLE_ARCHIVE
                     )
 

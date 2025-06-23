@@ -845,11 +845,11 @@ void LcdDisplay::SetPreviewImage(const lv_img_dsc_t* img_dsc) {
     // 在画布上显示图像，图像数据已经由调用方（esp32_camera.cc）处理过字节序
     DrawImageOnCanvas(0, 0, img_dsc->header.w, img_dsc->header.h, img_dsc->data);
 
-    ESP_LOGI(TAG, "照片已显示在画布上");
-   std::thread([this]() {
-        std::this_thread::sleep_for(std::chrono::seconds(3));
-        DestroyCanvas();
-    }).detach();
+//     ESP_LOGI(TAG, "照片已显示在画布上");
+//    std::thread([this]() {
+//         std::this_thread::sleep_for(std::chrono::seconds(3));
+//         DestroyCanvas();
+//     }).detach();
 
     return;
     DisplayLockGuard lock(this);

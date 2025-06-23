@@ -281,6 +281,11 @@ private:
     void set_led_impl(uint8_t brightness);
     void control_motor_impl(uint8_t motorid, int steps, bool direction);
     void play_music_impl(int file_number);
+
+    // Image display functions
+    bool ShowRawImageFromSD(void* display_ptr, const std::string& image_path, int width, int height);
+    static void DestroyCanvasDelay(void* param);
+    void CreateDestroyCanvasTask(void* display_param, int delay_ms);
 };
 
 #endif // MCP_SERVER_H

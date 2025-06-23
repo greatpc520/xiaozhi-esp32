@@ -15,6 +15,13 @@
 #include "application.h"
 #include "display.h"
 #include "board.h"
+#include "display/lcd_display.h"
+#include "display/spi_lcd_anim_display.h"
+#include "alarm_mcp_tools.h"
+#include "time_sync_manager.h"
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #define TAG "MCP"
 #define MOUNT_POINT "/sdcard"
@@ -37,6 +44,31 @@ void McpServer::AddCommonTools() {
     // Backup the original tools list and restore it after adding the common tools.
     auto original_tools = std::move(tools_);
     auto& board = Board::GetInstance();
+    
+    // 注册闹钟相关的MCP工具
+    AlarmMcpTools::RegisterTools(*this);
+    
+    // 注册时间同步管理工具
+    AddTool("rtc.get_status",
+        "获取RTC时钟状态和当前时间信息",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& time_sync_manager = TimeSyncManager::GetInstance();
+            std::string status = "{";
+            status += "\"rtc_working\": " + std::string(time_sync_manager.IsRtcWorking() ? "true" : "false") + ",";
+            status += "\"current_time\": \"" + time_sync_manager.GetCurrentTimeString() + "\"";
+            status += "}";
+            return status;
+        });
+        
+    AddTool("rtc.sync_time",
+        "手动触发NTP时间同步到RTC",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& time_sync_manager = TimeSyncManager::GetInstance();
+            time_sync_manager.TriggerNtpSync();
+            return "{\"success\": true, \"message\": \"NTP同步已启动\"}";
+        });
 
     AddTool("self.get_device_status",
         "Provides the real-time information of the device, including the current status of the audio speaker, screen, battery, network, etc.\n"
@@ -107,6 +139,132 @@ void McpServer::AddCommonTools() {
     }
 
    
+
+    // Add Image Display related tools
+    AddTool("showurlimg", "显示网络图片", PropertyList(), [&board](const PropertyList& parameters) -> ReturnValue {
+        auto display = board.GetDisplay();
+        if (!display) {
+            return "{\"success\": false, \"message\": \"Display not available\"}";
+        }
+        
+        // 使用static_cast替代dynamic_cast以兼容-fno-rtti
+        auto anim_display = static_cast<SpiLcdAnimDisplay*>(display);
+        if (!anim_display) {
+            return "{\"success\": false, \"message\": \"Invalid display type\"}";
+        }
+
+        const char* url = "http://www.replime.cn/ejpg/laughing.jpg";
+        anim_display->showurl(url);
+        
+        return "{\"success\": true, \"message\": \"Image display request sent\", \"url\": \"" + std::string(url) + "\"}";
+    });
+
+    AddTool("show_emotion", "显示表情图片", 
+        PropertyList({
+            Property("emotion", kPropertyTypeString)
+        }),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto display = board.GetDisplay();
+            if (!display) {
+                return "{\"success\": false, \"message\": \"Display not available\"}";
+            }
+            
+            auto anim_display = static_cast<SpiLcdAnimDisplay*>(display);
+            if (!anim_display) {
+                return "{\"success\": false, \"message\": \"Invalid display type\"}";
+            }
+
+            static const std::vector<std::pair<const char*, const char*>> emotions = {
+                {"neutral", "neutral"},
+                {"happy", "happy"},
+                {"laughing", "laughing"},
+                {"funny", "funny"},
+                {"sad", "sad"},
+                {"angry", "angry"},
+                {"crying", "crying"},
+                {"loving", "loving"},
+                {"embarrassed", "embarrassed"},
+                {"surprised", "surprised"},
+                {"shocked", "shocked"},
+                {"thinking", "thinking"},
+                {"winking", "winking"},
+                {"cool", "cool"},
+                {"relaxed", "relaxed"},
+                {"delicious", "delicious"},
+                {"kissy", "kissy"},
+                {"confident", "confident"},
+                {"sleepy", "sleepy"},
+                {"silly", "silly"},
+                {"confused", "confused"}
+            };
+
+            std::string emotion = properties["emotion"].value<std::string>();
+            auto it = std::find_if(emotions.begin(), emotions.end(),
+                [&emotion](const auto& e) { return e.first == emotion; });
+            
+            if (it == emotions.end()) {
+                return "{\"success\": false, \"message\": \"Invalid emotion name\"}";
+            }
+
+            std::string url = "http://www.replime.cn/ejpg/" + std::string(it->second) + ".jpg";
+            anim_display->showurl(url.c_str());
+            
+            return "{\"success\": true, \"message\": \"Emotion image display request sent\", \"emotion\": \"" + emotion + "\", \"url\": \"" + url + "\"}";
+        });
+
+    AddTool("show_sd_image", "显示SD卡中的图片", 
+        PropertyList({
+            Property("index", kPropertyTypeInteger, 0, 999)
+        }),
+        [this, &board](const PropertyList& properties) -> ReturnValue {
+            auto display = board.GetDisplay();
+            if (!display) {
+                return "{\"success\": false, \"message\": \"Display not available\"}";
+            }
+            int index = properties["index"].value<int>();
+            if (index == 0) {
+                return "{\"success\": true, \"message\": \"Index 0, no action taken\"}";
+            }
+            
+            // 构建文件路径
+            std::string image_path = "F" + std::to_string(index) + ".RAW";
+            
+            // 显示图片
+            if (this->ShowRawImageFromSD(display, image_path, 240, 240)) {
+                return "{\"success\": true, \"message\": \"Image displayed successfully\", \"file\": \"" + image_path + "\"}";
+            } else {
+                return "{\"success\": false, \"message\": \"Failed to display image\", \"file\": \"" + image_path + "\"}";
+            }
+        });
+
+    AddTool("close_image", "关闭当前显示的图片", 
+        PropertyList(),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto display = board.GetDisplay();
+            if (!display) {
+                return "{\"success\": false, \"message\": \"Display not available\"}";
+            }
+            if (display->HasCanvas()) {
+                display->DestroyCanvas();
+                return "{\"success\": true, \"message\": \"Image closed successfully\"}";
+            } else {
+                return "{\"success\": false, \"message\": \"No canvas to close\"}";
+            }
+        });
+
+    AddTool("delay_close_canvas", "延时关闭画布", 
+        PropertyList({
+            Property("delay_ms", kPropertyTypeInteger, 100, 10000)
+        }),
+        [this, &board](const PropertyList& properties) -> ReturnValue {
+            auto display = board.GetDisplay();
+            if (!display) {
+                return "{\"success\": false, \"message\": \"Display not available\"}";
+            }
+            int delay_ms = properties["delay_ms"].value<int>();
+            this->CreateDestroyCanvasTask(display, delay_ms);
+            return "{\"success\": true, \"message\": \"Canvas will be closed after " + std::to_string(delay_ms) + "ms\"}";
+        });
 
     // Add Chassis related tools
     AddTool("motorReset", "复位终端", PropertyList(), [this](const PropertyList& parameters) -> ReturnValue {
@@ -504,5 +662,92 @@ void McpServer::play_music_impl(int file_number)
     ESP_LOGI(TAG, "File %s played successfully", file_path);
 }
 
+// 延迟销毁画布的参数结构
+struct CanvasDelayParam {
+    void* display;
+    int delay_ms;
+};
 
+// Image display helper functions
+bool McpServer::ShowRawImageFromSD(void* display_ptr, const std::string& image_path, int width, int height) {
+    auto display = static_cast<LcdDisplay*>(display_ptr);
+    if (!display) {
+        ESP_LOGE(TAG, "Display is null");
+        return false;
+    }
+    
+    if (!display->HasCanvas()) {
+        display->CreateCanvas();
+    }
 
+    std::string full_path = "/sdcard/" + image_path;
+    FILE* fp = fopen(full_path.c_str(), "rb");
+    if (!fp) {
+        ESP_LOGE(TAG, "无法打开图片文件: %s", full_path.c_str());
+        display->ShowNotification("图片不存在", 2000);
+        return false;
+    }
+
+    size_t expected_size = width * height * 2;
+    uint8_t* rgb565_data = (uint8_t*)heap_caps_malloc(expected_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!rgb565_data) {
+        ESP_LOGE(TAG, "PSRAM分配RGB565缓冲区失败");
+        fclose(fp);
+        display->ShowNotification("内存不足", 2000);
+        return false;
+    }
+    
+    size_t read_size = fread(rgb565_data, 1, expected_size, fp);
+    fclose(fp);
+
+    if (read_size != expected_size) {
+        ESP_LOGE(TAG, "图片数据大小不符: 期望%zu字节, 实际%zu字节", expected_size, read_size);
+        display->ShowNotification("图片尺寸错误", 2000);
+        heap_caps_free(rgb565_data);
+        return false;
+    }
+
+    display->DrawImageOnCanvas(0, 0, width, height, rgb565_data);
+    ESP_LOGI(TAG, "raw RGB565图片显示成功: %s", full_path.c_str());
+    
+    heap_caps_free(rgb565_data);
+    return true;
+}
+
+// 延迟销毁画布的任务函数
+void McpServer::DestroyCanvasDelay(void* param) {
+    auto* delay_param = static_cast<CanvasDelayParam*>(param);
+    auto display = static_cast<LcdDisplay*>(delay_param->display);
+    int delay_ms = delay_param->delay_ms;
+    
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    
+    if (display && display->HasCanvas()) {  
+        display->DestroyCanvas();
+        ESP_LOGI(TAG, "已关闭画布显示");
+    }
+    
+    free(delay_param);
+    vTaskDelete(NULL);
+}
+
+// 创建延迟销毁画布的任务
+void McpServer::CreateDestroyCanvasTask(void* display_param, int delay_ms) {
+    auto* param = (CanvasDelayParam*)malloc(sizeof(CanvasDelayParam));
+    if (!param) {
+        ESP_LOGE(TAG, "Failed to allocate memory for CanvasDelayParam");
+        return;
+    }
+    
+    param->display = display_param;
+    param->delay_ms = delay_ms;
+    
+    xTaskCreate(
+        DestroyCanvasDelay,      // 任务函数
+        "DestroyCanvasTask",     // 任务名称
+        4096,                    // 堆栈大小
+        param,                   // 传递结构体指针      
+        5,                       // 优先级
+        NULL                     // 任务句柄
+    );
+}

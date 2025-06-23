@@ -42,6 +42,7 @@ public:
 
     // 拍照并显示到动画图片对象
     void CaptureAndShowPhoto();
+    void showurl(const char *url);
 
 protected:
     int role_id_ = 0;

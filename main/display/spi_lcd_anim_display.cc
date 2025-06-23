@@ -460,6 +460,11 @@ void SpiLcdAnimDisplay::SetAnimState(const std::string &state)
         return;
     // StopAnim();
     current_state_ = state;
+    if (HasCanvas())
+    {
+        DestroyCanvas();
+        ESP_LOGI(TAG, "已关闭画布显示");
+    }
     // if (state == "speak" && speak_anim_cache_count > 0) {
     //     frame_count_ = speak_anim_cache_count;
     //     anim_fps_ = 8;
@@ -1640,9 +1645,31 @@ cleanup:
 
     vTaskDelete(NULL);
 }
+void SpiLcdAnimDisplay::showurl(const char *url) {
+     if (url && strncmp(url, "http", 4) == 0)
+    {
+        // 如果是URL，下载图片并显示到画布
+        ESP_LOGI(TAG, "SetEmotion: downloading image from URL: %s", url);
 
+        // 创建下载参数
+        DownloadImageParams *params = (DownloadImageParams *)malloc(sizeof(DownloadImageParams));
+        if (!params)
+        {
+            ESP_LOGE(TAG, "Failed to allocate memory for download params");
+            return;
+        }
+
+        // 复制URL字符串
+        params->url = strdup(url);
+        params->display = this;
+
+        // 启动下载任务
+        xTaskCreate(download_image_task, "download_url", 8192, params, 2, NULL);
+    }
+}
 void SpiLcdAnimDisplay::SetEmotion(const char *emotion)
 {
+    return;
     DisplayLockGuard lock(this);
 
     // 检查是否是URL（以http开头）

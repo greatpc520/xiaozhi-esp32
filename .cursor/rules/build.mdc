@@ -1,0 +1,8 @@
+---
+description: idf的编译
+globs: 
+alwaysApply: false
+---
+使用vscode的idf插件编译
+
+如果要使用命令请注意系统win11,命令行为powershell

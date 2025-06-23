@@ -6,6 +6,11 @@
 #include "config.h"
 #include "i2c_device.h"
 #include "iot/thing_manager.h"
+#include "alarm_info.h"
+#include "alarm_manager.h"
+#include "clock_ui.h"
+#include "time_sync_manager.h"
+#include "assets/lang_config.h"
 
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
@@ -63,6 +68,8 @@ private:
     esp_io_expander_handle_t io_expander_ = NULL;
     esp_io_expander_handle_t io_expander2_ = NULL;
     Esp32Camera* camera_;
+    ClockUI* clock_ui_;
+    bool clock_enabled_;
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -108,6 +115,14 @@ private:
         vTaskDelay(pdMS_TO_TICKS(2000));
         auto &board = (Esp32S3Korvo2V3Board &)Board::GetInstance();
         auto touchpad = board.GetTouchpad();
+        
+        // 检查触摸屏是否初始化成功
+        if (touchpad == nullptr) {
+            ESP_LOGW(TAG, "Touchpad not available, exiting touchpad daemon");
+            vTaskDelete(NULL);
+            return;
+        }
+        
         bool was_touched = false;
         while (1)
         {
@@ -133,21 +148,27 @@ private:
     
     void InitCst816d()
     {
-        // return;
         ESP_LOGI(TAG, "Init CST816x");
-        try
-        {
-         cst816d_ = new Cst816x(i2c_bus_, 0x15);   /* code */
-        }
-        catch(const std::exception& e)
-        {
-            // std::cerr << e.what() << '\n';
-            ESP_LOGI(TAG, "init cst816 err");
+        
+        // 检查CST816x是否存在
+        esp_err_t ret = i2c_master_probe(i2c_bus_, 0x15, pdMS_TO_TICKS(100));
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "CST816x not found at address 0x15, skipping touch initialization");
+            cst816d_ = nullptr;
             return;
         }
         
-        
-        xTaskCreate(touchpad_daemon, "tp", 2048, NULL, 9, NULL);
+        try
+        {
+            cst816d_ = new Cst816x(i2c_bus_, 0x15);
+            xTaskCreate(touchpad_daemon, "tp", 2048, NULL, 9, NULL);
+            ESP_LOGI(TAG, "CST816x initialized successfully");
+        }
+        catch(const std::exception& e)
+        {
+            ESP_LOGE(TAG, "Failed to initialize CST816x: %s", e.what());
+            cst816d_ = nullptr;
+        }
     }
     static void motor_daemon(void *param)
     {
@@ -173,8 +194,8 @@ private:
     {
         ESP_LOGI(TAG, "Init Pcf8574");
         pcf8574_ = new Pcf8574(i2c_bus_, 0x27,io_expander_);
-        // pcf8574_->motor_reset();
-        xTaskCreate(motor_daemon, "motor", 2048*2, NULL, 1, NULL);
+        
+        // xTaskCreate(motor_daemon, "motor", 2048*2, NULL, 1, NULL);
         // 1开机：亮屏，复位+抬头，倾听动画
         // 2倾听：亮屏，抬头，倾听动画
         // 3说话：亮屏，抬头，说话动画+表情动画
@@ -460,8 +481,95 @@ private:
         }
     }
 
+    void InitializeClockAndAlarm() {
+        ESP_LOGI(TAG, "Initializing Time Sync Manager, Clock UI and Alarm Manager");
+        
+        // 初始化时间同步管理器
+        auto& time_sync_manager = TimeSyncManager::GetInstance();
+        if (!time_sync_manager.Initialize(i2c_bus_)) {
+            ESP_LOGE(TAG, "Failed to initialize TimeSyncManager");
+            return;
+        }
+        
+        // 创建时钟UI（延迟初始化）
+        clock_ui_ = new ClockUI();
+        
+        // 初始化时钟UI（在Display准备好后）
+        if (display_ && clock_ui_->Initialize(display_)) {
+            if (time_sync_manager.GetRtc()) {
+                clock_ui_->SetRtc(time_sync_manager.GetRtc());
+            }
+            ESP_LOGI(TAG, "Clock UI initialized successfully");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize Clock UI");
+        }
+        
+        clock_enabled_ = false;
+        
+        // 初始化闹钟管理器
+        auto& alarm_manager = AlarmManager::GetInstance();
+        if (!alarm_manager.Initialize()) {
+            ESP_LOGE(TAG, "Failed to initialize AlarmManager");
+            return;
+        }
+        
+        // 设置闹钟触发回调
+        alarm_manager.SetAlarmCallback([this](const AlarmInfo& alarm) {
+            OnAlarmTriggered(alarm);
+        });
+        
+        // 注意：时间同步将在WiFi连接成功后自动触发
+        
+        ESP_LOGI(TAG, "Time Sync Manager, Clock UI and Alarm Manager initialized");
+    }
+    
+
+    
+    void OnAlarmTriggered(const AlarmInfo& alarm) {
+        // 在定时器回调中只做最少的工作，避免任何可能的阻塞操作
+        // 移除所有日志记录和其他操作，只创建异步任务
+        
+        // 创建异步任务来处理所有闹钟相关操作
+        AlarmTaskParams* params = new AlarmTaskParams{this, alarm};
+        xTaskCreate(HandleAlarmTask, "handle_alarm", 4096, params, 5, nullptr);
+    }
+    
+    struct AlarmTaskParams {
+        Esp32S3Korvo2V3Board* board;
+        AlarmInfo alarm;
+    };
+    
+    static void HandleAlarmTask(void* param) {
+        auto* params = static_cast<AlarmTaskParams*>(param);
+        auto* board = params->board;
+        auto alarm = params->alarm;
+        
+        // 在异步任务中记录日志
+        ESP_LOGI(TAG, "HandleAlarmTask: Processing alarm: %s", alarm.description.c_str());
+        
+        // 显示闹钟通知
+        if (board->clock_ui_ && board->clock_enabled_) {
+            board->clock_ui_->ShowAlarmNotification(alarm.description);
+        }
+        
+        // 通知应用程序
+        Application::GetInstance().Schedule([alarm]() {
+            Application::GetInstance().Alert("闹钟提醒", alarm.description.c_str(), "happy");
+        });
+        
+        // 延时隐藏通知
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        if (board->clock_ui_) {
+            board->clock_ui_->HideAlarmNotification();
+        }
+        
+        ESP_LOGI(TAG, "HandleAlarmTask: Alarm processing completed");
+        delete params;
+        vTaskDelete(nullptr);
+    }
+
 public:
-    Esp32S3Korvo2V3Board() : boot_button_(BOOT_BUTTON_GPIO) {
+    Esp32S3Korvo2V3Board() : boot_button_(BOOT_BUTTON_GPIO), clock_ui_(nullptr), clock_enabled_(false) {
         ESP_LOGI(TAG, "Initializing esp32s3_korvo2_v3 Board");
         InitializeI2c();
         I2cDetect();
@@ -479,7 +587,15 @@ public:
         #endif
         // InitializeCamera_mc();
         InitializeIot();
+        InitializeClockAndAlarm();
         
+    }
+    
+    ~Esp32S3Korvo2V3Board() {
+        if (clock_ui_) {
+            delete clock_ui_;
+            clock_ui_ = nullptr;
+        }
     }
 
     virtual AudioCodec* GetAudioCodec() override {
@@ -504,7 +620,7 @@ public:
     }
         Cst816x *GetTouchpad()
     {
-        return cst816d_;
+        return cst816d_;  // 可能为nullptr，调用者需要检查
     }
     
     virtual Pcf8574 *SetMotor() override
@@ -513,6 +629,85 @@ public:
     }
     virtual Camera* GetCamera() override {
         return camera_;
+    }
+    
+    // 用于异步任务隐藏闹钟通知
+    void HideAlarmNotificationInternal() {
+        if (clock_ui_) {
+            clock_ui_->HideAlarmNotification();
+        }
+    }
+    
+    // 时钟相关接口
+    virtual void ShowClock() override {
+        if (clock_ui_ && !clock_enabled_) {
+            clock_ui_->Show();
+            clock_enabled_ = true;
+            
+            // 更新下一个闹钟显示
+            auto& alarm_manager = AlarmManager::GetInstance();
+            AlarmInfo next_alarm = alarm_manager.GetNextAlarm();
+            if (next_alarm.id > 0) {
+                char alarm_text[64];
+                snprintf(alarm_text, sizeof(alarm_text), "Next: %02d:%02d %s", 
+                        next_alarm.hour, next_alarm.minute, next_alarm.description.c_str());
+                clock_ui_->SetNextAlarm(alarm_text);
+            } else {
+                clock_ui_->SetNextAlarm("");
+            }
+            
+            ESP_LOGI(TAG, "Clock UI shown");
+        }
+    }
+    
+    virtual void HideClock() override {
+        if (clock_ui_ && clock_enabled_) {
+            clock_ui_->Hide();
+            clock_enabled_ = false;
+            ESP_LOGI(TAG, "Clock UI hidden");
+        }
+    }
+    
+    virtual bool IsClockVisible() const override {
+        return clock_enabled_ && clock_ui_ && clock_ui_->IsVisible();
+    }
+    
+    // RTC时钟相关接口实现
+    virtual bool InitializeRtcClock() override {
+        auto& time_sync_manager = TimeSyncManager::GetInstance();
+        return time_sync_manager.Initialize(i2c_bus_);
+    }
+    
+    virtual void SyncTimeOnBoot() override {
+        auto& time_sync_manager = TimeSyncManager::GetInstance();
+        time_sync_manager.SyncTimeOnBoot();
+    }
+    
+    // 重写WiFi网络启动，添加时间同步
+    virtual void StartNetwork() override {
+        // 先设置时间同步回调
+        auto& wifi_station = WifiStation::GetInstance();
+        
+        // 保存原有的OnConnected回调
+        wifi_station.OnConnected([this](const std::string& ssid) {
+            auto display = Board::GetInstance().GetDisplay();
+            std::string notification = Lang::Strings::CONNECTED_TO;
+            notification += ssid;
+            display->ShowNotification(notification.c_str(), 30000);
+            
+            ESP_LOGI(TAG, "WiFi connected to %s, triggering NTP sync", ssid.c_str());
+            
+            // 在任务中执行时间同步，避免阻塞WiFi回调
+            xTaskCreate([](void* param) {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                auto& time_sync_manager = TimeSyncManager::GetInstance();
+                time_sync_manager.TriggerNtpSync();
+                vTaskDelete(nullptr);
+            }, "ntp_sync_task", 4096, nullptr, 5, nullptr);
+        });
+        
+        // 调用基类的网络启动
+        WifiBoard::StartNetwork();
     }
 };
 

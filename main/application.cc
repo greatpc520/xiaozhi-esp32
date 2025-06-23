@@ -512,8 +512,8 @@ void Application::Start() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
-            control_motor(1,100,0); //mc
-            set_backlight(0); //mc
+            // control_motor(1,100,0); //mc
+            // set_backlight(0); //mc
         });
     });
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
@@ -735,7 +735,7 @@ void Application::Start() {
                 // keep_listening_ = true;
                 // SetDeviceState(kDeviceStateIdle);
                 SetDeviceState(kDeviceStateListening);
-                control_motor(1,100,1);
+                // control_motor(1,100,1);
             } else if (device_state_ == kDeviceStateSpeaking) {
                 AbortSpeaking(kAbortReasonWakeWordDetected);
             } else if (device_state_ == kDeviceStateActivating) {
@@ -1012,20 +1012,24 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetEmotion("neutral");
             audio_processor_->Stop();
             wake_word_->StartDetection();
+            // 在待机状态显示时钟（现在使用Canvas不会覆盖界面）
+            board.ShowClock();
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
             display->SetEmotion("neutral");
             display->SetChatMessage("system", "");
             display->SetAnimState("idle");
-            set_backlight(1);
-            control_motor(1,100,1);
+            // set_backlight(1);
+            // control_motor(1,100,1);
             timestamp_queue_.clear();
             break;
         case kDeviceStateListening:
             // display->SetStatus(Lang::Strings::LISTENING);
             display->SetStatus("");
             // display->SetEmotion("neutral");
+            // 在倾听状态隐藏时钟
+            board.HideClock();
             // Update the IoT states before sending the start listening command
 #if CONFIG_IOT_PROTOCOL_XIAOZHI
             UpdateIotStates();
@@ -1051,6 +1055,8 @@ void Application::SetDeviceState(DeviceState state) {
         case kDeviceStateSpeaking:
             // display->SetStatus(Lang::Strings::SPEAKING);
             display->SetStatus("");
+            // 在说话状态隐藏时钟
+            board.HideClock();
 
             if (listening_mode_ != kListeningModeRealtime) {
                 audio_processor_->Stop();
