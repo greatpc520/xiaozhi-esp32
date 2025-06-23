@@ -40,9 +40,12 @@ private:
     bool initialized_;
     bool is_visible_;
     bool notification_visible_;
-    
-    // 更新定时器（简化版本）
-    void* update_timer_;
+    void* update_timer_;         // 更新定时器（简化版本）
+    void* clock_container_;      // lv_obj_t* 时钟主容器  
+    void* time_label_;          // lv_obj_t* 大字体时间标签
+    void* date_label_;          // lv_obj_t* 日期标签
+    void* alarm_label_;         // lv_obj_t* 闹钟标签
+    void* notification_label_;  // lv_obj_t* 通知标签
     
     // 缓存的时间信息
     int last_displayed_hour_;
@@ -55,6 +58,14 @@ private:
     // 当前显示的内容
     std::string current_notification_;
     std::string current_alarm_text_;
+    
+    // UI创建和管理方法
+    void CreateClockUI();
+    void DestroyClockUI();
+    void UpdateTimeLabel();
+    void UpdateDateLabel();
+    void UpdateAlarmLabel();
+    void UpdateNotificationLabel();
     
     // 简化的方法声明
     static void UpdateTimerCallback(void* timer);

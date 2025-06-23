@@ -548,9 +548,22 @@ private:
         // 在异步任务中记录日志
         ESP_LOGI(TAG, "HandleAlarmTask: Processing alarm: %s", alarm.description.c_str());
         
-        // 显示闹钟通知
-        if (board->clock_ui_ && board->clock_enabled_) {
-            board->clock_ui_->ShowAlarmNotification(alarm.description);
+        // 闹钟触发时显示时钟界面
+        if (board->clock_ui_) {
+            // 异步显示时钟界面
+            Application::GetInstance().Schedule([board, alarm]() {
+                // 确保时钟界面可见
+                if (!board->clock_enabled_) {
+                    board->ShowClock();
+                }
+                
+                // 显示闹钟通知
+                if (board->clock_ui_) {
+                    board->clock_ui_->ShowAlarmNotification(alarm.description);
+                }
+                
+                ESP_LOGI(TAG, "Clock UI shown with alarm notification: %s", alarm.description.c_str());
+            });
         }
         
         // 通知应用程序
@@ -562,9 +575,13 @@ private:
         board->TriggerMusicPlayback();
         
         // 延时隐藏通知
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(8000)); // 延长显示时间到8秒
         if (board->clock_ui_) {
-            board->clock_ui_->HideAlarmNotification();
+            Application::GetInstance().Schedule([board]() {
+                if (board->clock_ui_) {
+                    board->clock_ui_->HideAlarmNotification();
+                }
+            });
         }
         
         ESP_LOGI(TAG, "HandleAlarmTask: Alarm processing completed");
@@ -649,54 +666,71 @@ public:
     
     // 时钟相关接口
     virtual void ShowClock() override {
-        if (clock_ui_) {
-            if (!clock_enabled_) {
-                // 更新下一个闹钟显示
-                auto& alarm_manager = AlarmManager::GetInstance();
-                AlarmInfo next_alarm = alarm_manager.GetNextAlarm();
-                if (next_alarm.id > 0) {
-                    char alarm_text[64];
-                    // 转换为12小时制显示
-                    int display_hour = next_alarm.hour;
-                    const char* am_pm = "AM";
-                    if (display_hour >= 12) {
-                        am_pm = "PM";
-                        if (display_hour > 12) {
-                            display_hour -= 12;
-                        }
-                    } else if (display_hour == 0) {
-                        display_hour = 12;
-                    }
-                    
-                    snprintf(alarm_text, sizeof(alarm_text), "%d:%02d %s", 
-                            display_hour, next_alarm.minute, am_pm);
-                    clock_ui_->SetNextAlarm(alarm_text);
-                } else {
-                    clock_ui_->SetNextAlarm("");
+        if (!clock_ui_) {
+            ESP_LOGW(TAG, "Clock UI not initialized");
+            return;
+        }
+        
+        if (clock_enabled_) {
+            ESP_LOGD(TAG, "Clock already enabled, just updating display");
+            // 异步更新显示，不阻塞主线程
+            Application::GetInstance().Schedule([this]() {
+                if (clock_ui_ && clock_enabled_) {
+                    clock_ui_->UpdateClockDisplay();
                 }
-                
-                clock_ui_->Show();
-                clock_enabled_ = true;
-                
-                // 启动时钟更新定时器（每30秒更新一次，更频繁以确保显示）
-                if (!clock_update_timer_) {
-                    esp_timer_create_args_t timer_args = {
-                        .callback = ClockUpdateTimerCallback,
-                        .arg = this,
-                        .dispatch_method = ESP_TIMER_TASK,
-                        .name = "clock_update_timer"
-                    };
-                    esp_timer_create(&timer_args, &clock_update_timer_);
-                }
-                esp_timer_start_periodic(clock_update_timer_, 30 * 1000000); // 30秒间隔
-                
-                ESP_LOGI(TAG, "Clock UI enabled with timer started");
+            });
+            return;
+        }
+        
+        // 异步初始化时钟，避免阻塞主线程
+        Application::GetInstance().Schedule([this]() {
+            if (!clock_ui_ || clock_enabled_) {
+                return; // 防止重复初始化
             }
             
-            // 立即更新显示，确保覆盖任何STANDBY状态
-            clock_ui_->UpdateClockDisplay();
-            ESP_LOGI(TAG, "Clock display force updated");
-        }
+            // 获取下一个闹钟信息（快速操作）
+            auto& alarm_manager = AlarmManager::GetInstance();
+            AlarmInfo next_alarm = alarm_manager.GetNextAlarm();
+            
+            if (next_alarm.id > 0) {
+                char alarm_text[64];
+                // 转换为12小时制显示
+                int display_hour = next_alarm.hour;
+                const char* am_pm = "AM";
+                if (display_hour >= 12) {
+                    am_pm = "PM";
+                    if (display_hour > 12) {
+                        display_hour -= 12;
+                    }
+                } else if (display_hour == 0) {
+                    display_hour = 12;
+                }
+                
+                snprintf(alarm_text, sizeof(alarm_text), "%d:%02d %s", 
+                        display_hour, next_alarm.minute, am_pm);
+                clock_ui_->SetNextAlarm(alarm_text);
+            } else {
+                clock_ui_->SetNextAlarm("");
+            }
+            
+            // 显示时钟UI（异步创建）
+            clock_ui_->Show();
+            clock_enabled_ = true;
+            
+            // 启动时钟更新定时器（低频率更新）
+            if (!clock_update_timer_) {
+                esp_timer_create_args_t timer_args = {
+                    .callback = ClockUpdateTimerCallback,
+                    .arg = this,
+                    .dispatch_method = ESP_TIMER_TASK,
+                    .name = "clock_update_timer"
+                };
+                esp_timer_create(&timer_args, &clock_update_timer_);
+            }
+            esp_timer_start_periodic(clock_update_timer_, 60 * 1000000); // 改为60秒间隔，减少资源消耗
+            
+            ESP_LOGI(TAG, "Clock UI enabled asynchronously with 60s update interval");
+        });
     }
     
     virtual void HideClock() override {
@@ -716,9 +750,16 @@ public:
     // 定期更新时钟显示的定时器回调
     static void ClockUpdateTimerCallback(void* arg) {
         auto* board = static_cast<Esp32S3Korvo2V3Board*>(arg);
-        if (board && board->clock_ui_ && board->clock_enabled_) {
-            board->clock_ui_->UpdateClockDisplay();
+        if (!board || !board->clock_ui_ || !board->clock_enabled_) {
+            return;
         }
+        
+        // 在定时器回调中只做最少的工作，将UI更新调度到主线程
+        Application::GetInstance().Schedule([board]() {
+            if (board && board->clock_ui_ && board->clock_enabled_) {
+                board->clock_ui_->UpdateClockDisplay();
+            }
+        });
     }
     
     virtual bool IsClockVisible() const override {
