@@ -30,6 +30,9 @@ public:
     // 显示/隐藏闹钟通知
     void ShowAlarmNotification(const std::string& notification);
     void HideAlarmNotification();
+    
+    // 更新时钟显示
+    void UpdateClockDisplay();
 
 private:
     Display* display_;

@@ -70,6 +70,7 @@ private:
     Esp32Camera* camera_;
     ClockUI* clock_ui_;
     bool clock_enabled_;
+    esp_timer_handle_t clock_update_timer_;
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -572,7 +573,7 @@ private:
     }
     
 public:
-    Esp32S3Korvo2V3Board() : boot_button_(BOOT_BUTTON_GPIO), clock_ui_(nullptr), clock_enabled_(false) {
+    Esp32S3Korvo2V3Board() : boot_button_(BOOT_BUTTON_GPIO), clock_ui_(nullptr), clock_enabled_(false), clock_update_timer_(nullptr) {
         ESP_LOGI(TAG, "Initializing esp32s3_korvo2_v3 Board");
         InitializeI2c();
         I2cDetect();
@@ -595,6 +596,11 @@ public:
     }
     
     ~Esp32S3Korvo2V3Board() {
+        if (clock_update_timer_) {
+            esp_timer_stop(clock_update_timer_);
+            esp_timer_delete(clock_update_timer_);
+            clock_update_timer_ = nullptr;
+        }
         if (clock_ui_) {
             delete clock_ui_;
             clock_ui_ = nullptr;
@@ -643,23 +649,53 @@ public:
     
     // 时钟相关接口
     virtual void ShowClock() override {
-        if (clock_ui_ && !clock_enabled_) {
-            clock_ui_->Show();
-            clock_enabled_ = true;
-            
-            // 更新下一个闹钟显示
-            auto& alarm_manager = AlarmManager::GetInstance();
-            AlarmInfo next_alarm = alarm_manager.GetNextAlarm();
-            if (next_alarm.id > 0) {
-                char alarm_text[64];
-                snprintf(alarm_text, sizeof(alarm_text), "Next: %02d:%02d %s", 
-                        next_alarm.hour, next_alarm.minute, next_alarm.description.c_str());
-                clock_ui_->SetNextAlarm(alarm_text);
-            } else {
-                clock_ui_->SetNextAlarm("");
+        if (clock_ui_) {
+            if (!clock_enabled_) {
+                // 更新下一个闹钟显示
+                auto& alarm_manager = AlarmManager::GetInstance();
+                AlarmInfo next_alarm = alarm_manager.GetNextAlarm();
+                if (next_alarm.id > 0) {
+                    char alarm_text[64];
+                    // 转换为12小时制显示
+                    int display_hour = next_alarm.hour;
+                    const char* am_pm = "AM";
+                    if (display_hour >= 12) {
+                        am_pm = "PM";
+                        if (display_hour > 12) {
+                            display_hour -= 12;
+                        }
+                    } else if (display_hour == 0) {
+                        display_hour = 12;
+                    }
+                    
+                    snprintf(alarm_text, sizeof(alarm_text), "%d:%02d %s", 
+                            display_hour, next_alarm.minute, am_pm);
+                    clock_ui_->SetNextAlarm(alarm_text);
+                } else {
+                    clock_ui_->SetNextAlarm("");
+                }
+                
+                clock_ui_->Show();
+                clock_enabled_ = true;
+                
+                // 启动时钟更新定时器（每30秒更新一次，更频繁以确保显示）
+                if (!clock_update_timer_) {
+                    esp_timer_create_args_t timer_args = {
+                        .callback = ClockUpdateTimerCallback,
+                        .arg = this,
+                        .dispatch_method = ESP_TIMER_TASK,
+                        .name = "clock_update_timer"
+                    };
+                    esp_timer_create(&timer_args, &clock_update_timer_);
+                }
+                esp_timer_start_periodic(clock_update_timer_, 30 * 1000000); // 30秒间隔
+                
+                ESP_LOGI(TAG, "Clock UI enabled with timer started");
             }
             
-            ESP_LOGI(TAG, "Clock UI shown");
+            // 立即更新显示，确保覆盖任何STANDBY状态
+            clock_ui_->UpdateClockDisplay();
+            ESP_LOGI(TAG, "Clock display force updated");
         }
     }
     
@@ -667,7 +703,21 @@ public:
         if (clock_ui_ && clock_enabled_) {
             clock_ui_->Hide();
             clock_enabled_ = false;
-            ESP_LOGI(TAG, "Clock UI hidden");
+            
+            // 停止时钟更新定时器
+            if (clock_update_timer_) {
+                esp_timer_stop(clock_update_timer_);
+            }
+            
+            ESP_LOGI(TAG, "Clock UI hidden and update timer stopped");
+        }
+    }
+    
+    // 定期更新时钟显示的定时器回调
+    static void ClockUpdateTimerCallback(void* arg) {
+        auto* board = static_cast<Esp32S3Korvo2V3Board*>(arg);
+        if (board && board->clock_ui_ && board->clock_enabled_) {
+            board->clock_ui_->UpdateClockDisplay();
         }
     }
     
