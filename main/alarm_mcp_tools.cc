@@ -1,4 +1,5 @@
 #include "alarm_mcp_tools.h"
+#include "time_sync_manager.h"
 #include <esp_log.h>
 #include <cJSON.h>
 #include <sstream>
@@ -216,17 +217,31 @@ ReturnValue AlarmMcpTools::CancelAlarmTool(const PropertyList& properties) {
 
 ReturnValue AlarmMcpTools::GetCurrentTimeTool(const PropertyList& properties) {
     try {
-        auto& alarm_manager = AlarmManager::GetInstance();
-        std::string current_time = alarm_manager.GetCurrentTimeString();
+        // 优先使用RTC时间，确保时间一致性
+        auto& time_sync_manager = TimeSyncManager::GetInstance();
+        auto* rtc = time_sync_manager.GetRtc();
         
-        // 获取详细时间信息
-        time_t now;
-        time(&now);
-        struct tm* timeinfo = localtime(&now);
+        time_t current_time;
+        struct tm* timeinfo;
+        
+        if (rtc && rtc->GetTime(&current_time)) {
+            // 使用RTC时间
+            timeinfo = localtime(&current_time);
+            ESP_LOGD(TAG, "Using RTC time for MCP response");
+        } else {
+            // 回退到系统时间
+            time(&current_time);
+            timeinfo = localtime(&current_time);
+            ESP_LOGD(TAG, "Using system time for MCP response (RTC unavailable)");
+        }
+        
+        // 格式化时间字符串
+        char time_str[64];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", timeinfo);
         
         cJSON* json = cJSON_CreateObject();
         cJSON_AddBoolToObject(json, "success", true);
-        cJSON_AddStringToObject(json, "current_time", current_time.c_str());
+        cJSON_AddStringToObject(json, "current_time", time_str);
         cJSON_AddNumberToObject(json, "year", timeinfo->tm_year + 1900);
         cJSON_AddNumberToObject(json, "month", timeinfo->tm_mon + 1);
         cJSON_AddNumberToObject(json, "day", timeinfo->tm_mday);
@@ -240,13 +255,17 @@ ReturnValue AlarmMcpTools::GetCurrentTimeTool(const PropertyList& properties) {
         cJSON_AddStringToObject(json, "weekday_name", weekdays[timeinfo->tm_wday]);
         
         // 添加时间戳
-        cJSON_AddNumberToObject(json, "timestamp", now);
+        cJSON_AddNumberToObject(json, "timestamp", current_time);
+        
+        // 添加时间源信息用于调试
+        cJSON_AddStringToObject(json, "time_source", rtc ? "RTC" : "System");
         
         char* json_str = cJSON_PrintUnformatted(json);
         std::string result(json_str);
         cJSON_free(json_str);
         cJSON_Delete(json);
         
+        ESP_LOGI(TAG, "GetCurrentTime: %s (source: %s)", time_str, rtc ? "RTC" : "System");
         return result;
         
     } catch (const std::exception& e) {

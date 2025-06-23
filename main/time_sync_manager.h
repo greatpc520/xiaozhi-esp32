@@ -42,6 +42,9 @@ public:
     // 手动触发NTP同步
     void TriggerNtpSync();
     
+    // 智能NTP同步（避免资源冲突）
+    void SmartNtpSync();
+    
     // 检查RTC是否正常工作
     bool IsRtcWorking() const;
     
@@ -58,6 +61,9 @@ private:
     std::function<void(bool, const std::string&)> sync_callback_;
     
     bool initialized_;
+    
+    // 检查系统是否适合进行时间同步
+    bool IsSystemIdleForSync();
     
     // NTP同步完成回调
     void OnNtpSyncComplete(bool success, const std::string& message);

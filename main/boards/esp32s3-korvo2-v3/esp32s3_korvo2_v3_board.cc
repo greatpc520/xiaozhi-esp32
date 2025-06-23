@@ -683,7 +683,7 @@ public:
         time_sync_manager.SyncTimeOnBoot();
     }
     
-    // 重写WiFi网络启动，添加时间同步
+    // 重写WiFi网络启动，添加智能时间同步
     virtual void StartNetwork() override {
         // 先设置时间同步回调
         auto& wifi_station = WifiStation::GetInstance();
@@ -695,19 +695,64 @@ public:
             notification += ssid;
             display->ShowNotification(notification.c_str(), 30000);
             
-            ESP_LOGI(TAG, "WiFi connected to %s, triggering NTP sync", ssid.c_str());
+            ESP_LOGI(TAG, "WiFi connected to %s, scheduling smart NTP sync", ssid.c_str());
             
-            // 在任务中执行时间同步，避免阻塞WiFi回调
-            xTaskCreate([](void* param) {
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                auto& time_sync_manager = TimeSyncManager::GetInstance();
-                time_sync_manager.TriggerNtpSync();
-                vTaskDelete(nullptr);
-            }, "ntp_sync_task", 4096, nullptr, 5, nullptr);
+            // 启动智能时间同步（异步、避免资源冲突、自动重试）
+            ScheduleSmartTimeSync();
         });
         
         // 调用基类的网络启动
         WifiBoard::StartNetwork();
+    }
+
+private:
+    void ScheduleSmartTimeSync() {
+        ESP_LOGI(TAG, "Scheduling smart time sync after network connection");
+        
+        // 创建时间同步任务，延迟启动以确保网络稳定
+        xTaskCreate([](void* param) {
+            auto* board = static_cast<Esp32S3Korvo2V3Board*>(param);
+            
+            // 等待网络稳定
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            
+            ESP_LOGI(TAG, "Starting smart time synchronization");
+            auto& time_sync_manager = TimeSyncManager::GetInstance();
+            
+            // 设置同步完成回调
+            time_sync_manager.SetSyncCallback([board](bool success, const std::string& message) {
+                if (success) {
+                    ESP_LOGI(TAG, "Time sync completed successfully: %s", message.c_str());
+                    
+                    // 同步成功后显示通知
+                    auto display = Board::GetInstance().GetDisplay();
+                    if (display) {
+                        display->ShowNotification("时间同步成功", 3000);
+                    }
+                    
+                    // 更新时钟UI显示
+                    if (board->clock_ui_ && board->clock_enabled_) {
+                        // 在主线程中更新UI
+                        Application::GetInstance().Schedule([]() {
+                            // 这里可以添加UI更新逻辑
+                        });
+                    }
+                } else {
+                    ESP_LOGW(TAG, "Time sync failed: %s", message.c_str());
+                    
+                    // 同步失败显示通知
+                    auto display = Board::GetInstance().GetDisplay();
+                    if (display) {
+                        display->ShowNotification("时间同步失败，将稍后重试", 3000);
+                    }
+                }
+            });
+            
+            // 触发智能时间同步
+            time_sync_manager.TriggerNtpSync();
+            
+            vTaskDelete(nullptr);
+        }, "smart_time_sync", 6144, this, 3, nullptr);  // 使用较低优先级
     }
 };
 
