@@ -557,6 +557,9 @@ private:
             Application::GetInstance().Alert("闹钟提醒", alarm.description.c_str(), "happy");
         });
         
+        // 自动播放音乐功能：检查服务器连接并发送播放音乐指令
+        board->TriggerMusicPlayback();
+        
         // 延时隐藏通知
         vTaskDelay(pdMS_TO_TICKS(5000));
         if (board->clock_ui_) {
@@ -567,7 +570,7 @@ private:
         delete params;
         vTaskDelete(nullptr);
     }
-
+    
 public:
     Esp32S3Korvo2V3Board() : boot_button_(BOOT_BUTTON_GPIO), clock_ui_(nullptr), clock_enabled_(false) {
         ESP_LOGI(TAG, "Initializing esp32s3_korvo2_v3 Board");
@@ -753,6 +756,72 @@ private:
             
             vTaskDelete(nullptr);
         }, "smart_time_sync", 6144, this, 3, nullptr);  // 使用较低优先级
+    }
+
+    void TriggerMusicPlayback() {
+        ESP_LOGI(TAG, "TriggerMusicPlayback: Checking server connection and device state");
+        
+        // 创建异步任务处理音乐播放请求，避免阻塞当前任务
+        xTaskCreate([](void* param) {
+            (void)param; // 避免未使用变量警告
+            auto& app = Application::GetInstance();
+            auto protocol = app.GetProtocolPtr();
+            
+            if (!protocol) {
+                ESP_LOGW(TAG, "Protocol not available, cannot trigger music playback");
+                vTaskDelete(nullptr);
+                return;
+            }
+            
+            // 检查当前设备状态
+            auto current_state = app.GetDeviceState();
+            ESP_LOGI(TAG, "Current device state: %d", current_state);
+            
+            // 如果正在说话，先打断
+            if (current_state == kDeviceStateSpeaking) {
+                ESP_LOGI(TAG, "Device is speaking, aborting current speech");
+                app.AbortSpeaking(kAbortReasonNone);
+                vTaskDelay(pdMS_TO_TICKS(1000)); // 等待打断完成
+            }
+            
+            // 检查音频通道是否已连接
+            if (!protocol->IsAudioChannelOpened()) {
+                ESP_LOGI(TAG, "Audio channel not opened, attempting to connect");
+                
+                // 如果设备处于空闲状态，触发连接
+                if (current_state == kDeviceStateIdle) {
+                    ESP_LOGI(TAG, "Starting chat state to connect to server");
+                    app.ToggleChatState();
+                    
+                    // 等待连接建立
+                    int retry_count = 0;
+                    const int max_retries = 30; // 最多等待30秒
+                    while (!protocol->IsAudioChannelOpened() && retry_count < max_retries) {
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                        retry_count++;
+                        ESP_LOGI(TAG, "Waiting for audio channel to open... (%d/%d)", retry_count, max_retries);
+                    }
+                    
+                    if (!protocol->IsAudioChannelOpened()) {
+                        ESP_LOGW(TAG, "Failed to establish audio channel after %d seconds", max_retries);
+                        vTaskDelete(nullptr);
+                        return;
+                    }
+                }
+            }
+            
+            // 现在通道已连接，发送播放音乐的指令
+            ESP_LOGI(TAG, "Audio channel is open, sending music playback request");
+            
+            // 使用Schedule确保在主线程中执行
+            app.Schedule([protocol]() {
+                // 发送模拟语音指令：随便播放一首歌曲
+                protocol->SendWakeWordDetected("随便播放一首歌曲");
+                ESP_LOGI(TAG, "Music playback request sent to server");
+            });
+            
+            vTaskDelete(nullptr);
+        }, "music_playback", 4096, this, 4, nullptr);
     }
 };
 
