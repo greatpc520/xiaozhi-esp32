@@ -24,6 +24,15 @@ private:
     // 获取当前时间工具
     static ReturnValue GetCurrentTimeTool(const PropertyList& properties);
     
+    // 设置闹钟声音工具
+    static ReturnValue SetAlarmSoundTool(const PropertyList& properties);
+    
+    // 获取闹钟声音类型工具
+    static ReturnValue GetAlarmSoundTypesTool(const PropertyList& properties);
+    
+    // 获取默认闹钟声音类型工具
+    static ReturnValue GetDefaultSoundTypeTool(const PropertyList& properties);
+    
     // 格式化闹钟信息为JSON字符串
     static std::string FormatAlarmInfoJson(const AlarmInfo& alarm);
     

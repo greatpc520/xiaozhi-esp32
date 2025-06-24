@@ -121,6 +121,8 @@ bool Pcf8563Rtc::GetTime(time_t* timestamp) {
         return false;
     }
     
+    // RTC存储的是本地时间，mktime()会正确转换为当前时区的时间戳
+    // 不需要手动调整时区偏移，系统已经设置了TZ环境变量
     *timestamp = mktime(&time_tm);
     return true;
 }

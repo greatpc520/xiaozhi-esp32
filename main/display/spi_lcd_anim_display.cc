@@ -277,6 +277,12 @@ void SpiLcdAnimDisplay::SetupUI()
 {
     DisplayLockGuard lock(this);
     auto screen = lv_screen_active();
+    
+    // 确保屏幕没有圆角和裁剪
+    lv_obj_set_style_radius(screen, 0, 0);
+    lv_obj_set_style_clip_corner(screen, false, 0);
+    lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     // 1. 创建动画容器（最底层）
     // lv_obj_t* anim_bg_container_ = lv_obj_create(screen);
     // lv_obj_set_size(anim_bg_container_, width_, height_);

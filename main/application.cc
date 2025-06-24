@@ -410,9 +410,19 @@ void Application::StopListening() {
 void Application::Start() {
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
-
+    
     /* Setup the display */
     auto display = board.GetDisplay();
+
+    /* Initialize RTC clock and time synchronization */
+    ESP_LOGI(TAG, "Initializing RTC clock and time synchronization");
+    if (!board.InitializeRtcClock()) {
+        ESP_LOGW(TAG, "Failed to initialize RTC clock, continuing with system time only");
+    }
+    
+    // Sync time on boot (will use RTC if available, system time otherwise)
+    board.SyncTimeOnBoot();
+    ESP_LOGI(TAG, "Time synchronization completed");
 
     /* Setup the audio codec */
     auto codec = board.GetAudioCodec();

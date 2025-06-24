@@ -29,6 +29,11 @@ bool TimeSyncManager::Initialize(i2c_master_bus_handle_t i2c_bus) {
         return true;
     }
     
+    // 设置时区为北京时间 UTC+8 (仅在此处设置一次)
+    setenv("TZ", "CST-8", 1);
+    tzset();
+    ESP_LOGI(TAG, "Timezone set to Beijing (UTC+8) in TimeSyncManager");
+    
     // 初始化PCF8563 RTC
     rtc_ = std::make_unique<Pcf8563Rtc>(i2c_bus);
     if (!rtc_->Initialize()) {
@@ -72,6 +77,10 @@ bool TimeSyncManager::Initialize(i2c_master_bus_handle_t i2c_bus) {
     
     initialized_ = true;
     ESP_LOGI(TAG, "TimeSyncManager initialized successfully");
+    
+    // 打印当前时间状态以供调试
+    PrintCurrentTimeStatus();
+    
     return true;
 }
 
@@ -124,6 +133,35 @@ void TimeSyncManager::TriggerNtpSync() {
     }, "smart_ntp_sync", 6144, this, 4, nullptr);  // 降低优先级避免干扰关键任务
 }
 
+void TimeSyncManager::ForceNtpSync() {
+    if (!initialized_ || !ntp_sync_) {
+        ESP_LOGE(TAG, "TimeSyncManager not properly initialized");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Forcing immediate NTP sync (skipping idle checks)");
+    
+    // 使用异步任务进行强制同步
+    xTaskCreate([](void* param) {
+        auto* manager = static_cast<TimeSyncManager*>(param);
+        
+        // 直接执行NTP同步，跳过空闲检查
+        if (manager->ntp_sync_) {
+            bool sync_success = manager->ntp_sync_->SyncTime([manager](bool success, const std::string& message) {
+                manager->OnNtpSyncComplete(success, message);
+            });
+            
+            if (sync_success) {
+                ESP_LOGI(TAG, "Force NTP sync completed successfully");
+            } else {
+                ESP_LOGW(TAG, "Force NTP sync failed");
+            }
+        }
+        
+        vTaskDelete(nullptr);
+    }, "force_ntp_sync", 6144, this, 5, nullptr);
+}
+
 bool TimeSyncManager::IsRtcWorking() const {
     if (!rtc_) {
         return false;
@@ -171,59 +209,58 @@ std::string TimeSyncManager::GetCurrentTimeString() const {
 void TimeSyncManager::SmartNtpSync() {
     ESP_LOGI(TAG, "Starting smart NTP sync process");
     
-    // 步骤1：等待合适的时机（避免与其他操作冲突）
+    // 优化同步策略：更快速的重试和更长的总尝试时间
     int retry_count = 0;
-    const int max_retries = 3;
-    const int retry_interval_ms = 30000; // 30秒重试间隔
+    const int max_retries = 5; // 增加重试次数
+    const int base_interval_ms = 10000; // 基础间隔10秒
     
     while (retry_count < max_retries) {
-        // 检查系统是否空闲（简单的启发式检查）
+        // 检查系统是否空闲
         if (IsSystemIdleForSync()) {
-            ESP_LOGI(TAG, "System appears idle, proceeding with NTP sync (attempt %d)", retry_count + 1);
+            ESP_LOGI(TAG, "System ready for NTP sync (attempt %d/%d)", retry_count + 1, max_retries);
             
             // 执行NTP同步
             bool sync_success = false;
             if (ntp_sync_) {
-                // 设置超时时间，避免长时间阻塞
                 sync_success = ntp_sync_->SyncTime([this](bool success, const std::string& message) {
                     OnNtpSyncComplete(success, message);
                 });
             }
             
             if (sync_success) {
-                ESP_LOGI(TAG, "Smart NTP sync completed successfully");
+                ESP_LOGI(TAG, "Smart NTP sync completed successfully on attempt %d", retry_count + 1);
                 return;
             } else {
-                ESP_LOGW(TAG, "NTP sync failed, will retry after delay");
+                ESP_LOGW(TAG, "NTP sync failed on attempt %d, will retry", retry_count + 1);
             }
         } else {
-            ESP_LOGI(TAG, "System busy, delaying NTP sync (attempt %d)", retry_count + 1);
+            ESP_LOGI(TAG, "System busy, will retry NTP sync (attempt %d/%d)", retry_count + 1, max_retries);
         }
         
         retry_count++;
         if (retry_count < max_retries) {
-            ESP_LOGI(TAG, "Waiting %d seconds before next sync attempt", retry_interval_ms / 1000);
-            vTaskDelay(pdMS_TO_TICKS(retry_interval_ms));
+            // 使用递增的重试间隔：10s, 15s, 20s, 25s
+            int retry_interval = base_interval_ms + (retry_count * 5000);
+            ESP_LOGI(TAG, "Waiting %d seconds before next sync attempt", retry_interval / 1000);
+            vTaskDelay(pdMS_TO_TICKS(retry_interval));
         }
     }
     
-    ESP_LOGW(TAG, "Smart NTP sync failed after %d attempts", max_retries);
+    ESP_LOGW(TAG, "Smart NTP sync failed after %d attempts, will rely on next trigger", max_retries);
 }
 
 bool TimeSyncManager::IsSystemIdleForSync() {
-    // 简单的系统空闲检查
-    // 可以根据需要添加更多检查条件
+    // 简化的系统空闲检查，放宽条件以提高同步成功率
     
-    // 检查1：内存使用情况
+    // 检查1：内存使用情况（降低阈值）
     size_t free_heap = esp_get_free_heap_size();
-    size_t min_heap = esp_get_minimum_free_heap_size();
     
-    if (free_heap < 50000) { // 少于50KB空闲内存
+    if (free_heap < 30000) { // 降低到30KB，提高同步机会
         ESP_LOGD(TAG, "Low memory detected: %zu bytes free", free_heap);
         return false;
     }
     
-    // 检查2：RTC是否被其他操作占用（简单检查）
+    // 检查2：RTC基本可用性（简化检查）
     if (rtc_) {
         // 尝试快速读取RTC状态
         struct tm test_time;
@@ -233,19 +270,18 @@ bool TimeSyncManager::IsSystemIdleForSync() {
         }
     }
     
-    // 检查3：确保不在闹钟检查周期内（避免与闹钟管理器冲突）
-    // 获取当前秒数，避免在整分钟时进行同步
+    // 检查3：简化时间窗口检查（放宽限制）
+    // 只避免在整分钟的前后2秒进行同步，减少冲突
     time_t now;
     time(&now);
     struct tm* tm_now = localtime(&now);
     
-    if (tm_now->tm_sec < 5 || tm_now->tm_sec > 55) {
+    if (tm_now->tm_sec <= 2 || tm_now->tm_sec >= 58) {
         ESP_LOGD(TAG, "Avoiding sync near minute boundary (current second: %d)", tm_now->tm_sec);
         return false;
     }
     
-    ESP_LOGD(TAG, "System appears idle for sync: heap=%zu, min_heap=%zu, sec=%d", 
-             free_heap, min_heap, tm_now->tm_sec);
+    ESP_LOGI(TAG, "System idle for sync: heap=%zu bytes, sec=%d", free_heap, tm_now->tm_sec);
     return true;
 }
 
@@ -299,4 +335,110 @@ void TimeSyncManager::OnNtpSyncComplete(bool success, const std::string& message
     if (sync_callback_) {
         sync_callback_(success, message);
     }
+}
+
+// 统一的时间获取函数 - 所有其他模块都应该使用这个函数
+bool TimeSyncManager::GetUnifiedTime(struct tm* timeinfo) {
+    if (!timeinfo) {
+        ESP_LOGE(TAG, "GetUnifiedTime: timeinfo is null");
+        return false;
+    }
+    
+    bool success = false;
+    
+    // 优先使用RTC时间（如果可用且有效）
+    if (rtc_ && IsRtcWorking()) {
+        success = rtc_->GetTime(timeinfo);
+        if (success) {
+            ESP_LOGV(TAG, "GetUnifiedTime: Using RTC time: %04d-%02d-%02d %02d:%02d:%02d", 
+                     timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+                     timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+            return true;
+        }
+    }
+    
+    // 回退到系统时间
+    time_t current_time;
+    time(&current_time);
+    struct tm* system_timeinfo = localtime(&current_time);
+    if (system_timeinfo) {
+        *timeinfo = *system_timeinfo;
+        ESP_LOGV(TAG, "GetUnifiedTime: Using system time: %04d-%02d-%02d %02d:%02d:%02d", 
+                 timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+                 timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+        return true;
+    }
+    
+    ESP_LOGE(TAG, "GetUnifiedTime: Failed to get time from both RTC and system");
+    return false;
+}
+
+// 统一的时间戳获取函数
+bool TimeSyncManager::GetUnifiedTimestamp(time_t* timestamp) {
+    if (!timestamp) {
+        ESP_LOGE(TAG, "GetUnifiedTimestamp: timestamp is null");
+        return false;
+    }
+    
+    // 优先使用RTC时间戳（如果可用且有效）
+    if (rtc_ && IsRtcWorking()) {
+        if (rtc_->GetTime(timestamp)) {
+            ESP_LOGV(TAG, "GetUnifiedTimestamp: Using RTC timestamp: %lld", (long long)*timestamp);
+            return true;
+        }
+    }
+    
+    // 回退到系统时间戳
+    time(timestamp);
+    ESP_LOGV(TAG, "GetUnifiedTimestamp: Using system timestamp: %lld", (long long)*timestamp);
+    return true;
+}
+
+// 打印当前时间状态（用于调试）
+void TimeSyncManager::PrintCurrentTimeStatus() {
+    ESP_LOGI(TAG, "=== Current Time Status Debug ===");
+    
+    // 系统时间
+    time_t system_time;
+    time(&system_time);
+    struct tm* system_tm = localtime(&system_time);
+    if (system_tm) {
+        ESP_LOGI(TAG, "System time: %04d-%02d-%02d %02d:%02d:%02d (timestamp: %lld)", 
+                 system_tm->tm_year + 1900, system_tm->tm_mon + 1, system_tm->tm_mday,
+                 system_tm->tm_hour, system_tm->tm_min, system_tm->tm_sec,
+                 (long long)system_time);
+    }
+    
+    // RTC时间
+    if (rtc_) {
+        struct tm rtc_tm;
+        if (rtc_->GetTime(&rtc_tm)) {
+            ESP_LOGI(TAG, "RTC time: %04d-%02d-%02d %02d:%02d:%02d", 
+                     rtc_tm.tm_year + 1900, rtc_tm.tm_mon + 1, rtc_tm.tm_mday,
+                     rtc_tm.tm_hour, rtc_tm.tm_min, rtc_tm.tm_sec);
+            
+            time_t rtc_timestamp;
+            if (rtc_->GetTime(&rtc_timestamp)) {
+                ESP_LOGI(TAG, "RTC timestamp: %lld", (long long)rtc_timestamp);
+                
+                // 计算时差
+                int time_diff = abs((int)(system_time - rtc_timestamp));
+                ESP_LOGI(TAG, "Time difference (system - RTC): %d seconds", time_diff);
+            }
+        } else {
+            ESP_LOGW(TAG, "Failed to read RTC time");
+        }
+    } else {
+        ESP_LOGW(TAG, "RTC not available");
+    }
+    
+    // 统一时间
+    struct tm unified_tm;
+    if (GetUnifiedTime(&unified_tm)) {
+        ESP_LOGI(TAG, "Unified time: %04d-%02d-%02d %02d:%02d:%02d", 
+                 unified_tm.tm_year + 1900, unified_tm.tm_mon + 1, unified_tm.tm_mday,
+                 unified_tm.tm_hour, unified_tm.tm_min, unified_tm.tm_sec);
+    }
+    
+    ESP_LOGI(TAG, "=== End Time Status Debug ===");
 } 

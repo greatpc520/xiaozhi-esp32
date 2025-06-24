@@ -42,6 +42,9 @@ public:
     // 手动触发NTP同步
     void TriggerNtpSync();
     
+    // 强制立即NTP同步（跳过空闲检查）
+    void ForceNtpSync();
+    
     // 智能NTP同步（避免资源冲突）
     void SmartNtpSync();
     
@@ -50,6 +53,17 @@ public:
     
     // 获取当前时间（优先从RTC）
     std::string GetCurrentTimeString() const;
+    
+    // === 统一时间接口 - 所有其他模块都应该使用这些函数 ===
+    
+    // 统一的时间获取函数（优先RTC，回退系统时间）
+    bool GetUnifiedTime(struct tm* timeinfo);
+    
+    // 统一的时间戳获取函数  
+    bool GetUnifiedTimestamp(time_t* timestamp);
+    
+    // 打印当前时间状态（用于调试）
+    void PrintCurrentTimeStatus();
 
 private:
     TimeSyncManager();

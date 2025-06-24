@@ -32,7 +32,9 @@ bool NtpSync::Initialize() {
     // 设置时区为中国北京时间 (UTC+8)
     // 使用明确的时区格式：CST表示中国标准时间，相对于UTC+8
     // setenv("TZ", "CST-8", 1);
-    tzset();
+    // tzset();
+    
+    ESP_LOGI(TAG, "Timezone set to Beijing (UTC+8)");
     
     // 不立即配置SNTP，等待网络连接
     ESP_LOGI(TAG, "NTP sync initialized, timezone set to Beijing (UTC+8). SNTP will be configured after network connection.");

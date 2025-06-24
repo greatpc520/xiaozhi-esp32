@@ -11,6 +11,8 @@
 #include <esp_pthread.h>
 #include <dirent.h>
 #include <fstream>
+#include <vector>
+#include <variant>
 
 #include "application.h"
 #include "display.h"
@@ -27,7 +29,91 @@
 #define MOUNT_POINT "/sdcard"
 #define AUDIO_FILE_EXTENSION ".P3"
 #define DEFAULT_TOOLCALL_STACK_SIZE 6144
+#define MOUNT_POINT "/sdcard"
+#define AUDIO_FILE_EXTENSION ".P3"
 
+// 播放SD卡音乐的MCP工具函数
+ReturnValue PlayMusicsd(int file_number)
+    {
+      // 挂载 SD 卡文件系统
+    //   bsp_sdcard_mount();
+      DIR *dir = opendir(MOUNT_POINT);
+      if (dir == NULL)
+      {
+        ESP_LOGE(TAG, "Failed to open directory: %s", MOUNT_POINT);
+        return "{\"success\": false, \"message\": \"Failed to open SD card directory\"}";
+      }
+      struct dirent *entry;
+      std::vector<std::string> audio_files; // 用来存储符合条件的音频文件
+      // 遍历目录中的文件
+      while ((entry = readdir(dir)) != NULL)
+      {
+        // 只处理扩展名为 .p3 的文件
+        if (strstr(entry->d_name, AUDIO_FILE_EXTENSION) || strstr(entry->d_name, ".p3"))
+        {
+          audio_files.push_back(entry->d_name); // 将符合条件的文件存入容器
+        }
+        ESP_LOGI(TAG, "Found file: %s", entry->d_name);
+      }
+      ESP_LOGI(TAG, "Total audio files found: %d", audio_files.size());
+      closedir(dir);
+      
+      if (audio_files.empty())
+      {
+        ESP_LOGE(TAG, "No valid audio file found.");
+        return "{\"success\": false, \"message\": \"No valid audio files found on SD card\"}";
+      }
+      
+      // 判断文件序号是否有效
+      if (file_number < 0 || file_number >= audio_files.size())
+      {
+        ESP_LOGW(TAG, "Invalid file number: %d, using first file", file_number);
+        file_number = 0; // 自动使用第一个文件
+      }
+      
+      // 根据 file_number 获取文件路径
+      char file_path[512];
+      snprintf(file_path, sizeof(file_path), "%s/%s", MOUNT_POINT, audio_files[file_number].c_str());
+      auto &app = Application::GetInstance();
+      ESP_LOGI(TAG, "Playing file: %s", file_path);
+      
+      // 尝试打开文件
+      std::ifstream file(file_path, std::ios::binary);
+      if (!file.is_open())
+      {
+        ESP_LOGE(TAG, "Failed to open file: %s", file_path);
+        return "{\"success\": false, \"message\": \"Failed to open audio file: " + std::string(audio_files[file_number]) + "\"}";
+      }
+      
+      // 获取文件大小并读取文件内容
+      file.seekg(0, std::ios::end);
+      size_t size = file.tellg();
+      file.seekg(0, std::ios::beg);
+      
+      if (size == 0)
+      {
+        ESP_LOGE(TAG, "Audio file is empty: %s", file_path);
+        return "{\"success\": false, \"message\": \"Audio file is empty: " + std::string(audio_files[file_number]) + "\"}";
+      }
+      
+      std::vector<char> file_data(size);
+      file.read(file_data.data(), size);
+      if (!file)
+      {
+        ESP_LOGE(TAG, "Failed to read the entire file: %s", file_path);
+        return "{\"success\": false, \"message\": \"Failed to read audio file: " + std::string(audio_files[file_number]) + "\"}";
+      }
+      
+      // 读取并播放声音
+      std::string_view sound_view(file_data.data(), file_data.size());
+        auto codec = Board::GetInstance().GetAudioCodec();       
+        // 确保音频输出打开
+        codec->EnableOutput(true);
+      app.PlaySound(sound_view);
+      ESP_LOGI(TAG, "File %s played successfully", file_path);
+      
+      return "{\"success\": true, \"message\": \"Audio file played successfully\", \"file\": \"" + std::string(audio_files[file_number]) + "\", \"size\": " + std::to_string(size) + ", \"total_files\": " + std::to_string(audio_files.size()) + "}";
+    }
 McpServer::McpServer() {
 }
 
@@ -68,6 +154,15 @@ void McpServer::AddCommonTools() {
             auto& time_sync_manager = TimeSyncManager::GetInstance();
             time_sync_manager.TriggerNtpSync();
             return "{\"success\": true, \"message\": \"NTP同步已启动\"}";
+        });
+        
+    AddTool("rtc.force_sync_time",
+        "强制立即NTP时间同步（跳过系统空闲检查）",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& time_sync_manager = TimeSyncManager::GetInstance();
+            time_sync_manager.ForceNtpSync();
+            return "{\"success\": true, \"message\": \"强制NTP同步已启动\"}";
         });
 
     AddTool("self.get_device_status",
@@ -321,6 +416,15 @@ void McpServer::AddCommonTools() {
         play_music_impl(0);
         return true;
     });
+    
+    AddTool("PlayMusicSD", "播放SD卡中的音频文件", 
+        PropertyList({
+            Property("file_number", kPropertyTypeInteger, 0, 0, 999)
+        }),
+        [this](const PropertyList& properties) -> ReturnValue {
+            int file_number = properties["file_number"].value<int>();
+            return PlayMusicsd(file_number);
+        });
 
      // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
@@ -583,14 +687,18 @@ void McpServer::DoToolCall(int id, const std::string& tool_name, const cJSON* to
         }
     });
     tool_call_thread_.detach();
-}void McpServer::set_backlight_impl(uint8_t brightness)
+}
+
+void McpServer::set_backlight_impl(uint8_t brightness)
 {
     auto& board = Board::GetInstance();
     auto motor = board.SetMotor();
     uint8_t level=0;
     if(brightness>0)level=1;
     motor->setbl(level);
-}void McpServer::set_led_impl(uint8_t brightness)
+}
+
+void McpServer::set_led_impl(uint8_t brightness)
 {
     auto& board = Board::GetInstance();
     auto motor = board.SetMotor();
@@ -606,60 +714,28 @@ void McpServer::control_motor_impl(uint8_t motorid, int steps, bool direction)
     motor->control_motor(motorid, steps, direction);
 }
 
-void McpServer::play_music_impl(int file_number)
-{
-    DIR *dir = opendir(MOUNT_POINT);
-    if (dir == NULL)
-    {
-        ESP_LOGE(TAG, "Failed to open directory: %s", MOUNT_POINT);
-        return;
+void McpServer::play_music_impl(int id) {
+    ESP_LOGI(TAG, "Executing play_music with ID: %d", id);
+    
+    // Get current audio state
+    auto& app = Application::GetInstance();
+    auto state = app.GetDeviceState();
+    
+    ESP_LOGI(TAG, "Current device state: %d", state);
+    
+    // Stop any current audio playback first
+    if (state == kDeviceStateSpeaking) {
+        ESP_LOGI(TAG, "Stopping current speech");
+        app.AbortSpeaking(kAbortReasonNone);
+        vTaskDelay(pdMS_TO_TICKS(500)); // Wait for abort to complete
     }
-    struct dirent *entry;
-    std::vector<std::string> audio_files; // 用来存储符合条件的音频文件
-    while ((entry = readdir(dir)) != NULL)
-    {
-        if (strstr(entry->d_name, AUDIO_FILE_EXTENSION))
-        {
-            audio_files.push_back(entry->d_name);
-        }
-        ESP_LOGE(TAG, " file name: %s", entry->d_name);
+    ReturnValue result = PlayMusicsd(id);
+    // Implementation for different music sources would go here
+    if (std::holds_alternative<std::string>(result)) {
+        ESP_LOGI(TAG, "Playing music with ID: %d, result: %s", id, std::get<std::string>(result).c_str());
+    } else {
+        ESP_LOGI(TAG, "Playing music with ID: %d, result type: %zu", id, result.index());
     }
-    ESP_LOGE(TAG, " file number: %d", audio_files.size());
-    closedir(dir);
-    if (audio_files.empty())
-    {
-        ESP_LOGE(TAG, "No valid audio file found.");
-        return;
-    }
-    if (file_number < 0 || file_number >= audio_files.size())
-    {
-        ESP_LOGE(TAG, "Invalid file number: %d", file_number);
-        return;
-    }
-    char file_path[512];
-    snprintf(file_path, sizeof(file_path), "%s/%s", MOUNT_POINT, audio_files[file_number].c_str());
-    auto &app = Application::GetInstance();
-    auto codec = Board::GetInstance().GetAudioCodec();
-    ESP_LOGI(TAG, "Playing file: %s", file_path);
-    std::ifstream file(file_path, std::ios::binary);
-    if (!file.is_open())
-    {
-        ESP_LOGE(TAG, "Failed to open file: %s", file_path);
-        return;
-    }
-    file.seekg(0, std::ios::end);
-    size_t size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    std::vector<char> file_data(size);
-    file.read(file_data.data(), size);
-    if (!file)
-    {
-        ESP_LOGE(TAG, "Failed to read the entire file: %s", file_path);
-        return;
-    }
-    std::string_view sound_view(file_data.data(), file_data.size());
-    app.PlaySound(sound_view);
-    ESP_LOGI(TAG, "File %s played successfully", file_path);
 }
 
 // 延迟销毁画布的参数结构
