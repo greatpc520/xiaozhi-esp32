@@ -22,6 +22,7 @@ public:
                       DisplayFonts fonts);
 
     virtual void SetupUI() override;
+    virtual void TeardownUI(); // 新增：卸载UI组件以节约资源
     // void SetRoleId(int role_id); // 切换角色ID，自动加载动画帧
     // void SetAnimState(const std::string& state); // "listen"/"speak"/"idle"
     void SetRoleId(int role_id) override;

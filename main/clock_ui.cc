@@ -1,5 +1,6 @@
 #include "clock_ui.h"
 #include "time_sync_manager.h"
+#include "display/spi_lcd_anim_display.h"  // 新增：用于资源管理
 #include <esp_log.h>
 #include <esp_task_wdt.h>
 #include <time.h>
@@ -206,6 +207,18 @@ void ClockUI::Show() {
     // 立即设置为可见状态，避免重复调用
     is_visible_ = true;
     
+    // 在显示时钟时，卸载SpiLcdAnimDisplay的UI以节约资源
+    if (display_) {
+        // 使用static_cast替代dynamic_cast，因为RTTI被禁用
+        auto* spi_anim_display = static_cast<SpiLcdAnimDisplay*>(display_);
+        // 注意：这里假设display_确实是SpiLcdAnimDisplay类型
+        // 在实际使用中应该通过其他方式确认类型安全性
+        if (spi_anim_display) {
+            ESP_LOGI(TAG, "Tearing down SpiLcdAnimDisplay UI to save resources");
+            spi_anim_display->TeardownUI();
+        }
+    }
+    
     // 异步创建UI组件，避免阻塞主线程
     lv_async_call([](void* param) {
         ClockUI* self = static_cast<ClockUI*>(param);
@@ -213,11 +226,7 @@ void ClockUI::Show() {
         if (self && self->is_visible_ && !self->clock_container_) {
             self->CreateClockUI();
             if (self->clock_container_) {
-                // 强制重置静态变量，确保首次显示正确更新
-                static time_t* last_update_time_ptr = nullptr;
-                static time_t* last_date_update_ptr = nullptr;
-                
-                // 通过外部函数重置静态变量（这里简化处理）
+                // 强制重置显示，确保首次显示正确更新
                 self->ForceUpdateDisplay();
                 
                 ESP_LOGI(TAG, "Clock UI created and shown asynchronously with forced update");
@@ -237,6 +246,17 @@ void ClockUI::Hide() {
     
     // 销毁UI组件
     DestroyClockUI();
+    
+    // 在隐藏时钟时，重新设置SpiLcdAnimDisplay的UI
+    if (display_) {
+        // 使用static_cast替代dynamic_cast，因为RTTI被禁用
+        auto* spi_anim_display = static_cast<SpiLcdAnimDisplay*>(display_);
+        // 注意：这里假设display_确实是SpiLcdAnimDisplay类型
+        if (spi_anim_display) {
+            ESP_LOGI(TAG, "Restoring SpiLcdAnimDisplay UI after hiding clock");
+            spi_anim_display->SetupUI();
+        }
+    }
     
     ESP_LOGI(TAG, "Clock UI hidden");
 }

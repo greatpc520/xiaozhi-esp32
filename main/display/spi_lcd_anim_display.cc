@@ -436,6 +436,52 @@ void SpiLcdAnimDisplay::SetupUI()
     // StartFrameQueueTask();
 }
 
+void SpiLcdAnimDisplay::TeardownUI() {
+    ESP_LOGI(TAG, "Starting to teardown SpiLcdAnimDisplay UI components");
+    
+    DisplayLockGuard lock(this);
+    
+    // 停止动画
+    StopAnim();
+    
+    // 销毁画布（如果存在）
+    if (HasCanvas()) {
+        DestroyCanvas();
+        ESP_LOGI(TAG, "Canvas destroyed during UI teardown");
+    }
+    
+    // 清理各种UI组件
+    if (emotion_label_img) {
+        lv_obj_del(emotion_label_img);
+        emotion_label_img = nullptr;
+    }
+    
+    if (container_) {
+        lv_obj_del(container_);
+        container_ = nullptr;
+    }
+    
+    if (status_bar_) {
+        status_bar_ = nullptr; // 会被container_一起删除
+    }
+    
+    if (anim_img_obj_) {
+        lv_obj_del(anim_img_obj_);
+        anim_img_obj_ = nullptr;
+    }
+    
+    // 重置指针
+    notification_label_ = nullptr;
+    status_label_ = nullptr;
+    mute_label_ = nullptr;
+    battery_label_ = nullptr;
+    chat_message_label_ = nullptr;
+    low_battery_popup_ = nullptr;
+    low_battery_label_ = nullptr;
+    
+    ESP_LOGI(TAG, "SpiLcdAnimDisplay UI components teardown completed");
+}
+
 void SpiLcdAnimDisplay::SetRoleId(int role_id)
 {
     if (role_id_ == role_id || role_id <= 0)

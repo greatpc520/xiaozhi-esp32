@@ -1046,7 +1046,8 @@ private:
             // 注册任务到看门狗
             esp_task_wdt_add(NULL);
             
-            auto* board = static_cast<Esp32S3Korvo2V3Board*>(param);
+            // 参数未使用，忽略以避免编译警告
+            (void)param;
             
             // 等待网络稳定
             vTaskDelay(pdMS_TO_TICKS(8000));
@@ -1506,7 +1507,7 @@ private:
                     // 使用Schedule确保在主线程中执行
                     app.Schedule([protocol, description = play_params->description]() {
                         // 发送模拟语音指令：随便播放一首歌曲 你对我说：你定的时间到了
-                        std::string command = "你对我说：" + description + "时间到了";
+                        std::string command = "你直接对我说：" + description + "时间到了";
                         protocol->SendWakeWordDetected(command.c_str());
                         ESP_LOGI(TAG, "AI music playback request sent to server: %s", command.c_str());
                     });

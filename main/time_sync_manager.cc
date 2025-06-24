@@ -90,24 +90,65 @@ void TimeSyncManager::SyncTimeOnBoot() {
         return;
     }
     
-    ESP_LOGI(TAG, "Starting boot time synchronization");
+    ESP_LOGI(TAG, "Starting boot time synchronization with enhanced timezone safety");
+    
+    // 打印启动前的时间状态
+    ESP_LOGI(TAG, "=== Boot Time Sync Debug - BEFORE ===");
+    PrintCurrentTimeStatus();
     
     // 检查RTC时间是否有效
     if (IsRtcWorking()) {
         struct tm rtc_time;
-        if (rtc_->GetTime(&rtc_time)) {
+        time_t rtc_timestamp;
+        
+        if (rtc_->GetTime(&rtc_time) && rtc_->GetTime(&rtc_timestamp)) {
             int rtc_year = rtc_time.tm_year + 1900;
-            // 只有当RTC时间是合理的（2024年以后）才同步到系统
+            
+            // 获取当前系统时间用于比较
+            time_t system_timestamp;
+            time(&system_timestamp);
+            struct tm* system_time = localtime(&system_timestamp);
+            
+            ESP_LOGI(TAG, "RTC time: %04d-%02d-%02d %02d:%02d:%02d (timestamp: %lld)", 
+                     rtc_time.tm_year + 1900, rtc_time.tm_mon + 1, rtc_time.tm_mday,
+                     rtc_time.tm_hour, rtc_time.tm_min, rtc_time.tm_sec, (long long)rtc_timestamp);
+            
+            ESP_LOGI(TAG, "System time: %04d-%02d-%02d %02d:%02d:%02d (timestamp: %lld)", 
+                     system_time->tm_year + 1900, system_time->tm_mon + 1, system_time->tm_mday,
+                     system_time->tm_hour, system_time->tm_min, system_time->tm_sec, (long long)system_timestamp);
+            
+            // 计算时间差（秒）
+            long long time_diff = (long long)rtc_timestamp - (long long)system_timestamp;
+            ESP_LOGI(TAG, "Time difference (RTC - System): %lld seconds", time_diff);
+            
+            // 只有当RTC时间是合理的（2024年以后）才考虑同步
             if (rtc_year >= 2024) {
-                ESP_LOGI(TAG, "RTC has valid time (%d), syncing to system", rtc_year);
-                rtc_->SyncRtcToSystemTime();
+                // 检查时间差异：只有当差异超过1小时时才同步，避免因时区问题导致的小差异
+                if (abs((int)time_diff) > 3600) { // 1小时 = 3600秒
+                    ESP_LOGI(TAG, "Large time difference detected (%lld sec), syncing RTC to system", time_diff);
+                    
+                    // 使用RTC时间更新系统时间
+                    if (rtc_->SyncRtcToSystemTime()) {
+                        ESP_LOGI(TAG, "System time synced from RTC successfully");
+                    } else {
+                        ESP_LOGW(TAG, "Failed to sync system time from RTC");
+                    }
+                } else {
+                    ESP_LOGI(TAG, "Time difference is small (%lld sec), no sync needed", time_diff);
+                }
             } else {
                 ESP_LOGW(TAG, "RTC time year (%d) is too old, not syncing to system", rtc_year);
             }
+        } else {
+            ESP_LOGW(TAG, "Failed to read RTC time for boot sync");
         }
     } else {
         ESP_LOGW(TAG, "RTC not working or invalid time, keeping system time unchanged");
     }
+    
+    // 打印同步后的时间状态
+    ESP_LOGI(TAG, "=== Boot Time Sync Debug - AFTER ===");
+    PrintCurrentTimeStatus();
     
     // NTP同步将在网络连接后由WiFi回调触发
     ESP_LOGI(TAG, "Boot time sync completed. NTP sync will be triggered after WiFi connection.");

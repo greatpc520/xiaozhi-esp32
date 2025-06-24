@@ -85,7 +85,21 @@ bool Pcf8563Rtc::SetTime(const struct tm* time_tm) {
 }
 
 bool Pcf8563Rtc::SetTime(time_t timestamp) {
+    // 调试：记录输入的时间戳
+    ESP_LOGV(TAG, "SetTime: Setting RTC from timestamp %lld", (long long)timestamp);
+    
     struct tm* time_tm = localtime(&timestamp);
+    if (!time_tm) {
+        ESP_LOGE(TAG, "SetTime: localtime conversion failed for timestamp %lld", (long long)timestamp);
+        return false;
+    }
+    
+    // 调试：记录转换后的tm结构体
+    ESP_LOGV(TAG, "SetTime: Timestamp %lld converts to %04d-%02d-%02d %02d:%02d:%02d",
+             (long long)timestamp,
+             time_tm->tm_year + 1900, time_tm->tm_mon + 1, time_tm->tm_mday,
+             time_tm->tm_hour, time_tm->tm_min, time_tm->tm_sec);
+    
     return SetTime(time_tm);
 }
 
@@ -121,9 +135,27 @@ bool Pcf8563Rtc::GetTime(time_t* timestamp) {
         return false;
     }
     
-    // RTC存储的是本地时间，mktime()会正确转换为当前时区的时间戳
-    // 不需要手动调整时区偏移，系统已经设置了TZ环境变量
+    // 调试：记录转换前的tm结构体
+    ESP_LOGV(TAG, "GetTime: Converting tm to timestamp - %04d-%02d-%02d %02d:%02d:%02d",
+             time_tm.tm_year + 1900, time_tm.tm_mon + 1, time_tm.tm_mday,
+             time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec);
+    
+    // RTC存储的是本地时间，mktime()会根据当前设置的TZ环境变量正确转换
+    // 不需要手动调整时区偏移，因为系统已经设置了TZ="CST-8"
     *timestamp = mktime(&time_tm);
+    
+    if (*timestamp == -1) {
+        ESP_LOGE(TAG, "mktime conversion failed");
+        return false;
+    }
+    
+    // 调试：验证转换结果
+    struct tm* verify_tm = localtime(timestamp);
+    ESP_LOGV(TAG, "GetTime: Timestamp %lld converts back to %04d-%02d-%02d %02d:%02d:%02d",
+             (long long)*timestamp,
+             verify_tm->tm_year + 1900, verify_tm->tm_mon + 1, verify_tm->tm_mday,
+             verify_tm->tm_hour, verify_tm->tm_min, verify_tm->tm_sec);
+    
     return true;
 }
 
