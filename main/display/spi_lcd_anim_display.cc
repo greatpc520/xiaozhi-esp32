@@ -390,7 +390,8 @@ void SpiLcdAnimDisplay::SetupUI()
     lv_label_set_long_mode(status_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_style_text_align(status_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(status_label_, current_theme.text, 0);
-    lv_label_set_text(status_label_, Lang::Strings::INITIALIZING);
+    lv_label_set_text(status_label_,"");
+    // lv_label_set_text(status_label_, Lang::Strings::INITIALIZING);
 
     mute_label_ = lv_label_create(status_bar_);
     lv_label_set_text(mute_label_, "");
@@ -427,10 +428,10 @@ void SpiLcdAnimDisplay::SetupUI()
     // ShowIdleImage();
     SetRoleId(1);
     // SetAnimState("idle");
-     lv_async_call([](void* param){
-            SpiLcdAnimDisplay* self = static_cast<SpiLcdAnimDisplay*>(param);
-            self->ShowIdleImage();
-        }, this);
+    //  lv_async_call([](void* param){
+    //         SpiLcdAnimDisplay* self = static_cast<SpiLcdAnimDisplay*>(param);
+    //         self->ShowIdleImage();
+    //     }, this);
 
     ESP_LOGI(TAG, "SetupUI: %s", current_state_.c_str());
     // StartFrameQueueTask();

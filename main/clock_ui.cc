@@ -19,6 +19,7 @@ static const char* TAG = "ClockUI";
 // 声明可用的普惠字体
 // LV_FONT_DECLARE(font_puhui_30_4);  // 最大字体，用于时间
 LV_FONT_DECLARE(font_puhui_20_4);  // 中等字体
+LV_FONT_DECLARE(font_puhui_40_4);  // 中等字体
 // LV_FONT_DECLARE(font_puhui_16_4);  // 用于日期
 // LV_FONT_DECLARE(font_puhui_14_1);  // 最小字体，用于AM/PM
 
@@ -111,9 +112,9 @@ void ClockUI::CreateClockUI() {
     if (time_lbl) {
         time_label_ = time_lbl;
         lv_obj_set_style_text_color(time_lbl, lv_color_white(), 0);
-        lv_obj_set_style_text_font(time_lbl, &font_puhui_20_4, 0);
+        lv_obj_set_style_text_font(time_lbl, &font_puhui_40_4, 0);
         lv_obj_set_style_text_align(time_lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_pos(time_lbl, 0, LV_VER_RES / 3 - 40);
+        lv_obj_set_pos(time_lbl, 0, LV_VER_RES / 2 - 40);
         lv_obj_set_size(time_lbl, LV_HOR_RES, LV_SIZE_CONTENT);
         lv_label_set_text(time_lbl, "");
     }
@@ -154,7 +155,7 @@ void ClockUI::CreateClockUI() {
         lv_obj_set_style_text_align(notification_lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_pad_all(notification_lbl, 8, 0); // 添加内边距
         lv_obj_set_style_radius(notification_lbl, 8, 0); // 圆角
-        lv_obj_set_pos(notification_lbl, 10, LV_VER_RES / 2 - 20);
+        lv_obj_set_pos(notification_lbl, 10, LV_VER_RES-60);// / 2 - 20);
         lv_obj_set_size(notification_lbl, LV_HOR_RES - 20, LV_SIZE_CONTENT);
         lv_label_set_text(notification_lbl, "");  // 初始为空
         lv_obj_add_flag(notification_lbl, LV_OBJ_FLAG_HIDDEN); // 初始隐藏
