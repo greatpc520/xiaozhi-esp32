@@ -38,6 +38,9 @@ public:
     // 更新时钟显示
     void UpdateClockDisplay();
     
+    // 刷新下一次闹钟显示（闹钟触发后调用）
+    void RefreshNextAlarmDisplay();
+    
     // 新增：设置闹钟表情
     void SetAlarmEmotion(const std::string& emotion);
 
@@ -50,6 +53,7 @@ private:
     void* update_timer_;         // 更新定时器（简化版本）
     lv_obj_t* clock_container_;      // 时钟主容器  
     lv_obj_t* time_label_;          // 大字体时间标签
+    lv_obj_t* time_am_pm_label_;    // 小字体时间标签
     lv_obj_t* date_label_;          // 日期标签
     lv_obj_t* alarm_label_;         // 闹钟标签
     lv_obj_t* notification_label_;  // 通知标签

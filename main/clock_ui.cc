@@ -114,9 +114,20 @@ void ClockUI::CreateClockUI() {
         lv_obj_set_style_text_color(time_lbl, lv_color_white(), 0);
         lv_obj_set_style_text_font(time_lbl, &font_puhui_40_4, 0);
         lv_obj_set_style_text_align(time_lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_pos(time_lbl, 0, LV_VER_RES / 2 - 40);
+        lv_obj_set_pos(time_lbl, 0, LV_VER_RES / 2 - 40 -30);
         lv_obj_set_size(time_lbl, LV_HOR_RES, LV_SIZE_CONTENT);
         lv_label_set_text(time_lbl, "");
+
+        lv_obj_t* time_am_pm = lv_label_create(container);
+    if (time_am_pm) {
+        time_am_pm_label_ = time_am_pm;
+        lv_obj_set_style_text_color(time_am_pm, lv_color_white(), 0);
+        lv_obj_set_style_text_font(time_am_pm, &font_puhui_20_4, 0);
+        lv_obj_set_style_text_align(time_am_pm, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_set_pos(time_am_pm,  LV_HOR_RES/2 + 58, LV_VER_RES / 2 - 30-30);
+        lv_obj_set_size(time_am_pm, LV_HOR_RES, LV_SIZE_CONTENT);
+        lv_label_set_text(time_am_pm, "上午");
+    }
     }
     
     // 创建日期标签（简化版本）
@@ -131,34 +142,80 @@ void ClockUI::CreateClockUI() {
         lv_label_set_text(date_lbl, "");
     }
     
-    // 创建闹钟标签（显示下一个闹钟）
-    lv_obj_t* alarm_lbl = lv_label_create(container);
-    if (alarm_lbl) {
-        alarm_label_ = alarm_lbl;
-        lv_obj_set_style_text_color(alarm_lbl, lv_color_make(255, 165, 0), 0); // 橙色显示闹钟
-        lv_obj_set_style_text_font(alarm_lbl, &font_puhui_20_4, 0);
-        lv_obj_set_style_text_align(alarm_lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_pos(alarm_lbl, 0, LV_VER_RES - 60);
-        lv_obj_set_size(alarm_lbl, LV_HOR_RES, LV_SIZE_CONTENT);
-        lv_label_set_text(alarm_lbl, "");  // 初始为空
-        lv_obj_add_flag(alarm_lbl, LV_OBJ_FLAG_HIDDEN); // 初始隐藏
+    // 创建闹钟标签（显示下一个闹钟）- 现在改为创建容器
+    // 创建闹钟容器（包含图标和文字）
+    lv_obj_t* alarm_container = lv_obj_create(container);
+    if (alarm_container) {
+        alarm_icon_label_ = alarm_container; // 重用变量作为容器指针
+        lv_obj_set_size(alarm_container, LV_HOR_RES, LV_SIZE_CONTENT);
+        lv_obj_set_pos(alarm_container, 0, LV_VER_RES - 60);
+        lv_obj_set_style_bg_opa(alarm_container, LV_OPA_TRANSP, 0); // 透明背景
+        lv_obj_set_style_border_width(alarm_container, 0, 0);
+        lv_obj_set_style_pad_all(alarm_container, 0, 0);
+        lv_obj_set_style_radius(alarm_container, 0, 0);
+        lv_obj_clear_flag(alarm_container, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(alarm_container, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(alarm_container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_flex_main_place(alarm_container, LV_FLEX_ALIGN_CENTER, 0);
+        lv_obj_set_style_flex_cross_place(alarm_container, LV_FLEX_ALIGN_CENTER, 0);
+        
+        // 在容器内创建图标标签
+        lv_obj_t* icon_lbl = lv_label_create(alarm_container);
+        if (icon_lbl) {
+            lv_obj_set_style_text_color(icon_lbl, lv_color_make(255, 165, 0), 0); // 橙色
+            lv_obj_set_style_text_font(icon_lbl, icon_font_ ? (const lv_font_t*)icon_font_ : &font_puhui_20_4, 0);
+            lv_label_set_text(icon_lbl, "\uF071"); // Font Awesome 闹钟图标
+            lv_obj_set_style_pad_right(icon_lbl, 8, 0); // 与文字间距
+        }
+        
+        // 在容器内创建文字标签
+        lv_obj_t* text_lbl = lv_label_create(alarm_container);
+        if (text_lbl) {
+            alarm_text_label_ = text_lbl; // 存储文字标签指针
+            lv_obj_set_style_text_color(text_lbl, lv_color_make(255, 165, 0), 0); // 橙色
+            lv_obj_set_style_text_font(text_lbl, text_font_ ? (const lv_font_t*)text_font_ : &font_puhui_20_4, 0);
+            lv_label_set_text(text_lbl, "");  // 初始为空
+        }
+        
+        lv_obj_add_flag(alarm_container, LV_OBJ_FLAG_HIDDEN); // 初始隐藏
     }
     
-    // 创建闹钟通知标签（居中显示，用于闹钟触发时的通知）
-    lv_obj_t* notification_lbl = lv_label_create(container);
-    if (notification_lbl) {
-        notification_label_ = notification_lbl;
-        lv_obj_set_style_text_color(notification_lbl, lv_color_make(255, 255, 255), 0); // 白色文字
-        lv_obj_set_style_bg_color(notification_lbl, lv_color_make(255, 100, 100), 0); // 浅红色背景
-        lv_obj_set_style_bg_opa(notification_lbl, LV_OPA_90, 0); // 半透明背景
-        lv_obj_set_style_text_font(notification_lbl, &font_puhui_20_4, 0);
-        lv_obj_set_style_text_align(notification_lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_pad_all(notification_lbl, 8, 0); // 添加内边距
-        lv_obj_set_style_radius(notification_lbl, 8, 0); // 圆角
-        lv_obj_set_pos(notification_lbl, 10, LV_VER_RES-60);// / 2 - 20);
-        lv_obj_set_size(notification_lbl, LV_HOR_RES - 20, LV_SIZE_CONTENT);
-        lv_label_set_text(notification_lbl, "");  // 初始为空
-        lv_obj_add_flag(notification_lbl, LV_OBJ_FLAG_HIDDEN); // 初始隐藏
+    // 创建闹钟通知容器（居中显示，用于闹钟触发时的通知）
+    lv_obj_t* notification_container = lv_obj_create(container);
+    if (notification_container) {
+        notification_icon_label_ = notification_container; // 重用变量作为容器指针
+        lv_obj_set_style_bg_color(notification_container, lv_color_make(255, 100, 100), 0); // 浅红色背景
+        lv_obj_set_style_bg_opa(notification_container, LV_OPA_90, 0); // 半透明背景
+        lv_obj_set_style_pad_all(notification_container, 8, 0); // 添加内边距
+        lv_obj_set_style_radius(notification_container, 8, 0); // 圆角
+        lv_obj_set_style_border_width(notification_container, 0, 0);
+        lv_obj_set_pos(notification_container, 10, LV_VER_RES-60);
+        lv_obj_set_size(notification_container, LV_HOR_RES - 20, LV_SIZE_CONTENT);
+        lv_obj_clear_flag(notification_container, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(notification_container, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(notification_container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_flex_main_place(notification_container, LV_FLEX_ALIGN_CENTER, 0);
+        lv_obj_set_style_flex_cross_place(notification_container, LV_FLEX_ALIGN_CENTER, 0);
+        
+        // 在容器内创建图标标签
+        lv_obj_t* notif_icon_lbl = lv_label_create(notification_container);
+        if (notif_icon_lbl) {
+            lv_obj_set_style_text_color(notif_icon_lbl, lv_color_white(), 0); // 白色
+            lv_obj_set_style_text_font(notif_icon_lbl, icon_font_ ? (const lv_font_t*)icon_font_ : &font_puhui_20_4, 0);
+            lv_label_set_text(notif_icon_lbl, "\uF0F3"); // Font Awesome 铃铛图标
+            lv_obj_set_style_pad_right(notif_icon_lbl, 8, 0); // 与文字间距
+        }
+        
+        // 在容器内创建文字标签
+        lv_obj_t* notif_text_lbl = lv_label_create(notification_container);
+        if (notif_text_lbl) {
+            notification_text_label_ = notif_text_lbl; // 存储文字标签指针
+            lv_obj_set_style_text_color(notif_text_lbl, lv_color_white(), 0); // 白色
+            lv_obj_set_style_text_font(notif_text_lbl, text_font_ ? (const lv_font_t*)text_font_ : &font_puhui_20_4, 0);
+            lv_label_set_text(notif_text_lbl, "");  // 初始为空
+        }
+        
+        lv_obj_add_flag(notification_container, LV_OBJ_FLAG_HIDDEN); // 初始隐藏
     }
     
     ESP_LOGI(TAG, "Lightweight clock UI components created successfully");
@@ -175,9 +232,10 @@ void ClockUI::DestroyClockUI() {
     void* container = clock_container_;
     clock_container_ = nullptr;
     time_label_ = nullptr;
+    time_am_pm_label_ = nullptr;
     date_label_ = nullptr;
-    alarm_label_ = nullptr;
-    notification_label_ = nullptr;
+    alarm_label_ = nullptr;  // 旧版本兼容
+    notification_label_ = nullptr;  // 旧版本兼容
     alarm_emotion_label_ = nullptr;
     alarm_icon_label_ = nullptr;  // 现在指向闹钟容器
     alarm_text_label_ = nullptr;  // 指向容器内的文字标签
@@ -267,36 +325,40 @@ void ClockUI::SetRtc(Pcf8563Rtc* rtc) {
 }
 
 void ClockUI::SetNextAlarm(const std::string& alarm_text) {
-    if (!alarm_label_) {
-        ESP_LOGE(TAG, "SetNextAlarm: alarm_label_ is null!");
+    // 新版本：使用容器结构，alarm_icon_label_现在指向容器
+    if (!alarm_icon_label_) {
+        ESP_LOGE(TAG, "SetNextAlarm: alarm container is null!");
         return;
     }
     
     ESP_LOGI(TAG, "SetNextAlarm called with text: '%s'", alarm_text.c_str());
     
     if (alarm_text.empty()) {
-        // 隐藏闹钟标签
-        lv_obj_add_flag(alarm_label_, LV_OBJ_FLAG_HIDDEN);
-        ESP_LOGI(TAG, "SetNextAlarm: Alarm label hidden (empty text)");
+        // 隐藏闹钟容器
+        lv_obj_add_flag(alarm_icon_label_, LV_OBJ_FLAG_HIDDEN);
+        ESP_LOGI(TAG, "SetNextAlarm: Alarm container hidden (empty text)");
     } else {
-        // 显示闹钟标签并设置文本
-        static char display_text[128];
-        snprintf(display_text, sizeof(display_text), "⏰ Next: %s", alarm_text.c_str());
+        // 更新文字标签内容（闹钟时间）
+        if (alarm_text_label_ && lv_obj_is_valid(alarm_text_label_)) {
+            static char display_text[128];
+            snprintf(display_text, sizeof(display_text), " %s", alarm_text.c_str());
+            lv_label_set_text(alarm_text_label_, display_text);
+        }
         
-        // 检查LVGL对象有效性
-        if (lv_obj_is_valid(alarm_label_)) {
-            lv_label_set_text(alarm_label_, display_text);
-            lv_obj_clear_flag(alarm_label_, LV_OBJ_FLAG_HIDDEN);
-            ESP_LOGI(TAG, "SetNextAlarm: Alarm label shown with text: '%s'", display_text);
+        // 显示闹钟容器
+        if (lv_obj_is_valid(alarm_icon_label_)) {
+            lv_obj_clear_flag(alarm_icon_label_, LV_OBJ_FLAG_HIDDEN);
+            ESP_LOGI(TAG, "SetNextAlarm: Alarm container shown with text: '%s'", alarm_text.c_str());
         } else {
-            ESP_LOGE(TAG, "SetNextAlarm: alarm_label_ is not a valid LVGL object!");
+            ESP_LOGE(TAG, "SetNextAlarm: alarm container is not a valid LVGL object!");
         }
     }
 }
 
 void ClockUI::ShowAlarmNotification(const std::string& notification) {
-    if (!notification_label_) {
-        ESP_LOGE(TAG, "ShowAlarmNotification: notification_label_ is null!");
+    // 新版本：使用容器结构，notification_icon_label_现在指向容器
+    if (!notification_icon_label_) {
+        ESP_LOGE(TAG, "ShowAlarmNotification: notification container is null!");
         return;
     }
     
@@ -307,31 +369,99 @@ void ClockUI::ShowAlarmNotification(const std::string& notification) {
     
     ESP_LOGI(TAG, "ShowAlarmNotification called with: '%s'", notification.c_str());
     
-    // 设置通知文本
-    static char display_text[256];
-    snprintf(display_text, sizeof(display_text), "🔔 %s", notification.c_str());
+    // 更新文字标签内容（通知文本）
+    if (notification_text_label_ && lv_obj_is_valid(notification_text_label_)) {
+        lv_label_set_text(notification_text_label_, notification.c_str());
+    }
     
-    // 检查LVGL对象有效性
-    if (lv_obj_is_valid(notification_label_)) {
-        lv_label_set_text(notification_label_, display_text);
-        lv_obj_clear_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
+    // 显示通知容器
+    if (lv_obj_is_valid(notification_icon_label_)) {
+        lv_obj_clear_flag(notification_icon_label_, LV_OBJ_FLAG_HIDDEN);
         notification_visible_ = true;
-        ESP_LOGI(TAG, "ShowAlarmNotification: Notification shown with text: '%s'", display_text);
+        ESP_LOGI(TAG, "ShowAlarmNotification: Notification container shown with text: '%s'", notification.c_str());
     } else {
-        ESP_LOGE(TAG, "ShowAlarmNotification: notification_label_ is not a valid LVGL object!");
+        ESP_LOGE(TAG, "ShowAlarmNotification: notification container is not a valid LVGL object!");
     }
 }
 
 void ClockUI::HideAlarmNotification() {
-    if (!notification_label_) {
+    // 新版本：使用容器结构，notification_icon_label_现在指向容器
+    if (!notification_icon_label_) {
         return;
     }
     
-    // 隐藏通知标签
-    lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
+    // 隐藏通知容器
+    lv_obj_add_flag(notification_icon_label_, LV_OBJ_FLAG_HIDDEN);
     notification_visible_ = false;
     
-    ESP_LOGI(TAG, "Alarm notification hidden");
+    ESP_LOGI(TAG, "Alarm notification container hidden");
+    
+    // 闹钟通知隐藏后，刷新下一次闹钟显示
+    RefreshNextAlarmDisplay();
+}
+
+void ClockUI::RefreshNextAlarmDisplay() {
+    if (!is_visible_) {
+        return;
+    }
+    
+    ESP_LOGI(TAG, "RefreshNextAlarmDisplay: Updating next alarm information");
+    
+    // 获取下一个闹钟信息
+    auto& alarm_manager = AlarmManager::GetInstance();
+    AlarmInfo next_alarm = alarm_manager.GetNextAlarm();
+    
+    if (next_alarm.id > 0) {
+        // 构建闹钟显示文本
+        time_t current_time;
+        struct tm alarm_tm;
+        
+        // 获取当前时间用于构建闹钟时间戳
+        auto& time_sync_manager = TimeSyncManager::GetInstance();
+        auto* rtc = time_sync_manager.GetRtc();
+        
+        if (rtc && rtc->GetTime(&current_time)) {
+            localtime_r(&current_time, &alarm_tm);
+        } else {
+            time(&current_time);
+            localtime_r(&current_time, &alarm_tm);
+        }
+        
+        // 设置闹钟时间
+        alarm_tm.tm_hour = next_alarm.hour;
+        alarm_tm.tm_min = next_alarm.minute;
+        alarm_tm.tm_sec = 0;
+        
+        // 转换为12小时制显示
+        int display_hour = alarm_tm.tm_hour;
+        const char* am_pm = "AM";
+        if (display_hour >= 12) {
+            am_pm = "PM";
+            if (display_hour > 12) {
+                display_hour -= 12;
+            }
+        } else if (display_hour == 0) {
+            display_hour = 12;
+        }
+        
+        char alarm_text[64];
+        snprintf(alarm_text, sizeof(alarm_text), "%d:%02d %s", 
+                display_hour, alarm_tm.tm_min, am_pm);
+        
+        SetNextAlarm(alarm_text);
+        
+        // 设置闹钟表情
+        if (!next_alarm.description.empty()) {
+            SetAlarmEmotion(next_alarm.description);
+        }
+        
+        ESP_LOGI(TAG, "RefreshNextAlarmDisplay: Updated to show next alarm: %s", alarm_text);
+    } else {
+        // 没有闹钟，隐藏闹钟显示
+        SetNextAlarm("");
+        SetAlarmEmotion("");
+        ESP_LOGI(TAG, "RefreshNextAlarmDisplay: No next alarm, hiding alarm display");
+    }
 }
 
 void ClockUI::UpdateTimerCallback(void* timer) {
@@ -387,6 +517,7 @@ void ClockUI::UpdateTimeLabel() {
     // 使用静态变量减少栈使用，改用分钟级别的比较避免时区问题
     static int last_update_minute = -1;
     static char time_str[32] = {0};  // 预初始化，增加缓冲区大小以避免截断警告
+    static char time_am_pm_str[32] = {0};
     
     // 简化时间获取逻辑，减少函数调用层次
     struct tm timeinfo = {0};
@@ -411,7 +542,8 @@ void ClockUI::UpdateTimeLabel() {
         // 转换为12小时制 - 简化逻辑
         int hour = timeinfo.tm_hour;
         int minute = timeinfo.tm_min;
-        const char* am_pm = (hour >= 12) ? "PM" : "AM";
+        // const char* am_pm = (hour >= 12) ? "PM" : "AM";
+        const char* am_pm = (hour >= 12) ? "下午" : "上午";
         
         if (hour == 0) {
             hour = 12;
@@ -420,7 +552,9 @@ void ClockUI::UpdateTimeLabel() {
         }
         
         // 更新时间显示 - 使用安全的snprintf
-        int ret = snprintf(time_str, sizeof(time_str), "%d:%02d %s", hour, minute, am_pm);
+        // int ret = snprintf(time_str, sizeof(time_str), "%d:%02d %s", hour, minute, am_pm);
+        int ret = snprintf(time_str, sizeof(time_str), "%02d:%02d", hour, minute);
+        int ret2 = snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", am_pm);
         if (ret >= sizeof(time_str)) {
             ESP_LOGW(TAG, "UpdateTimeLabel: Time string truncated");
             return;
@@ -428,8 +562,8 @@ void ClockUI::UpdateTimeLabel() {
         
         // 确保在主线程中更新LVGL组件
         lv_label_set_text(time_label_, time_str);
+        lv_label_set_text(time_am_pm_label_, time_am_pm_str);
         last_update_minute = current_minute;
-        
     } catch (...) {
         ESP_LOGE(TAG, "UpdateTimeLabel: Exception during time update");
     }
@@ -469,11 +603,12 @@ void ClockUI::UpdateDateLabel() {
         }
         
         // 使用静态数组减少栈使用
-        static const char* weekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+        // static const char* weekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+        static const char* weekdays[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
         int weekday = (timeinfo.tm_wday >= 0 && timeinfo.tm_wday <= 6) ? timeinfo.tm_wday : 0;
         
         // 格式化日期显示，确保月份和日期的正确性 - 使用安全的snprintf
-        int ret = snprintf(date_str, sizeof(date_str), "%d/%d %s", 
+        int ret = snprintf(date_str, sizeof(date_str), "%02d月%02d日 %s", 
                  timeinfo.tm_mon + 1, timeinfo.tm_mday, weekdays[weekday]);
         if (ret >= sizeof(date_str)) {
             ESP_LOGW(TAG, "UpdateDateLabel: Date string truncated");
@@ -496,6 +631,7 @@ void ClockUI::ForceUpdateTimeLabel() {
     if (!time_label_ || !is_visible_) return;
     
     static char time_str[32];
+    static char time_am_pm_str[32];
     
     // 使用TimeSyncManager的统一时间获取函数
     struct tm timeinfo;
@@ -518,11 +654,14 @@ void ClockUI::ForceUpdateTimeLabel() {
     }
     
     // 强制更新时间显示
-    snprintf(time_str, sizeof(time_str), "%d:%02d %s", hour, minute, is_pm ? "PM" : "AM");
+    // snprintf(time_str, sizeof(time_str), "%d:%02d %s", hour, minute, is_pm ? "下午" : "上午");
+    snprintf(time_str, sizeof(time_str), "%02d:%02d", hour, minute);
+    snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", is_pm ? "下午" : "上午");
     
-    if (lv_obj_is_valid(time_label_)) {
+    if (lv_obj_is_valid(time_label_) && lv_obj_is_valid(time_am_pm_label_)) {
         lv_label_set_text(time_label_, time_str);
-        ESP_LOGI(TAG, "Force updated time: %s", time_str);
+        lv_label_set_text(time_am_pm_label_, time_am_pm_str);
+        ESP_LOGI(TAG, "Force updated time: %s %s", time_str, time_am_pm_str);
     }
 }
 
@@ -540,11 +679,12 @@ void ClockUI::ForceUpdateDateLabel() {
         return;
     }
     
-    const char* weekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    // const char* weekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char* weekdays[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
     int weekday = timeinfo.tm_wday;
     
     // 强制格式化日期显示
-    snprintf(date_str, sizeof(date_str), "%d/%d %s", 
+    snprintf(date_str, sizeof(date_str), "%02d月%02d日 %s", 
              timeinfo.tm_mon + 1, timeinfo.tm_mday, weekdays[weekday]);
     
     if (lv_obj_is_valid(date_label_)) {

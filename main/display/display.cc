@@ -19,9 +19,11 @@ Display::Display() {
     esp_timer_create_args_t notification_timer_args = {
         .callback = [](void *arg) {
             Display *display = static_cast<Display*>(arg);
-            DisplayLockGuard lock(display);
-            lv_obj_add_flag(display->notification_label_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(display->status_label_, LV_OBJ_FLAG_HIDDEN);
+            if(display->notification_label_ != nullptr && display->status_label_ != nullptr) {
+                DisplayLockGuard lock(display);
+                lv_obj_add_flag(display->notification_label_, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(display->status_label_, LV_OBJ_FLAG_HIDDEN);
+            }
         },
         .arg = this,
         .dispatch_method = ESP_TIMER_TASK,

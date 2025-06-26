@@ -689,6 +689,7 @@ private:
             Application::GetInstance().Schedule([board]() {
                 if (board->clock_ui_) {
                     board->clock_ui_->HideAlarmNotification();
+                    // 注意：RefreshNextAlarmDisplay() 已经在 HideAlarmNotification() 中被调用
                 }
             });
         }
@@ -867,9 +868,10 @@ public:
             
             // 转换为12小时制显示（使用与时间标签相同的逻辑）
             int display_hour = alarm_tm.tm_hour;
-            const char* am_pm = "AM";
+            // const char* am_pm = "AM";
+            const char* am_pm = "上午";
             if (display_hour >= 12) {
-                am_pm = "PM";
+                am_pm = "下午";
                 if (display_hour > 12) {
                     display_hour -= 12;
                 }
@@ -877,7 +879,7 @@ public:
                 display_hour = 12;
             }
             
-            snprintf(alarm_text, sizeof(alarm_text), "%d:%02d %s", 
+            snprintf(alarm_text, sizeof(alarm_text), "%02d:%02d %s", 
                     display_hour, alarm_tm.tm_min, am_pm);
             
             ESP_LOGI(TAG, "ShowClock: Scheduling alarm text setting: '%s'", alarm_text);
@@ -915,7 +917,7 @@ public:
             };
             esp_timer_create(&timer_args, &clock_update_timer_);
         }
-        esp_timer_start_periodic(clock_update_timer_, 300 * 1000000); // 5分钟间隔，大幅减少资源占用
+        esp_timer_start_periodic(clock_update_timer_, 30 * 1000000); // 5分钟间隔，大幅减少资源占用
         
         ESP_LOGI(TAG, "Clock UI enabled with time validation and alarm cleanup");
     }
@@ -948,7 +950,7 @@ public:
         time_t current_time = time(nullptr);
         
         // 只有当时间变化超过2分钟时才更新
-        if (current_time - last_update < 120) {
+        if (current_time - last_update < 30) {
             return;
         }
         last_update = current_time;

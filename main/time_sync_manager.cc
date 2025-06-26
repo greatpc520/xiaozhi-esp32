@@ -30,8 +30,8 @@ bool TimeSyncManager::Initialize(i2c_master_bus_handle_t i2c_bus) {
     }
     
     // 设置时区为北京时间 UTC+8 (仅在此处设置一次)
-    setenv("TZ", "CST-8", 1);
-    tzset();
+    // setenv("TZ", "CST-8", 1);
+    // tzset();
     ESP_LOGI(TAG, "Timezone set to Beijing (UTC+8) in TimeSyncManager");
     
     // 初始化PCF8563 RTC
@@ -205,22 +205,26 @@ void TimeSyncManager::ForceNtpSync() {
 
 bool TimeSyncManager::IsRtcWorking() const {
     if (!rtc_) {
+        ESP_LOGE(TAG, "RTC not initialized");
         return false;
     }
     
     // 检查RTC是否运行
     if (!rtc_->IsRunning()) {
+        ESP_LOGE(TAG, "RTC not running");
         return false;
     }
     
     // 检查RTC时间是否有效（不是默认值）
     struct tm rtc_time;
     if (!rtc_->GetTime(&rtc_time)) {
+        ESP_LOGE(TAG, "Failed to read RTC time");
         return false;
     }
     
     // 检查年份是否合理（2020年以后）
     if (rtc_time.tm_year + 1900 < 2020) {
+        ESP_LOGE(TAG, "RTC time is too old");
         return false;
     }
     
