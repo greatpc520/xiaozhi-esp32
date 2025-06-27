@@ -588,7 +588,7 @@ private:
             }
             
             // 设置字体信息
-            clock_ui_->SetFonts(&font_puhui_20_4, &font_awesome_20_4, font_emoji_32_init());
+            clock_ui_->SetFonts(&font_puhui_20_4, &font_awesome_20_4, font_emoji_64_init());
             
             ESP_LOGI(TAG, "Clock UI initialized successfully");
         } else {
@@ -889,7 +889,7 @@ public:
             std::string description = next_alarm.description;
             Application::GetInstance().Schedule([this, alarm_text_str, description]() {
                 if (clock_ui_) {
-                    clock_ui_->SetNextAlarm(alarm_text_str);
+                    clock_ui_->SetNextAlarm(alarm_text_str.c_str());
                     if (!description.empty()) {
                         clock_ui_->SetAlarmEmotion(description);
                     }
@@ -965,6 +965,11 @@ public:
     
     virtual bool IsClockVisible() const override {
         return clock_enabled_ && clock_ui_ && clock_ui_->IsVisible();
+    }
+    
+    // 时钟UI实例访问接口
+    virtual ClockUI* GetClockUI() override {
+        return clock_ui_;
     }
     
     // RTC时钟相关接口实现
@@ -1048,8 +1053,8 @@ private:
             // 注册任务到看门狗
             esp_task_wdt_add(NULL);
             
-            // 参数未使用，忽略以避免编译警告
-            (void)param;
+            // 获取board指针
+            auto* board_ptr = static_cast<Esp32S3Korvo2V3Board*>(param);
             
             // 等待网络稳定
             vTaskDelay(pdMS_TO_TICKS(8000));
@@ -1057,9 +1062,9 @@ private:
             
             ESP_LOGI(TAG, "Starting smart time synchronization");
             auto& time_sync_manager = TimeSyncManager::GetInstance();
-            
-            // 简化回调，减少栈使用
-            time_sync_manager.SetSyncCallback([](bool success, const std::string& message) {
+        
+        // 设置NTP同步回调，包含时钟UI立即更新逻辑
+        time_sync_manager.SetSyncCallback([board_ptr](bool success, const std::string& message) {
                 if (success) {
                     ESP_LOGI(TAG, "Time sync completed successfully: %s", message.c_str());
                     
@@ -1067,6 +1072,24 @@ private:
                     auto display = Board::GetInstance().GetDisplay();
                     if (display) {
                         display->ShowNotification("时间同步成功", 3000);
+                    }
+                    
+                                    // 如果时钟界面正在显示，立即更新时间显示
+                if (board_ptr->clock_ui_ && board_ptr->clock_enabled_ && board_ptr->IsClockVisible()) {
+                    ESP_LOGI(TAG, "Clock UI is visible, updating time display after NTP sync");
+                    
+                    // 使用异步调用确保在主线程中更新UI
+                    Application::GetInstance().Schedule([board_ptr]() {
+                        if (board_ptr->clock_ui_ && board_ptr->clock_enabled_) {
+                            // 强制立即更新时钟显示
+                            board_ptr->clock_ui_->ForceUpdateDisplay();
+                            // 同时更新整个时钟界面
+                            board_ptr->clock_ui_->UpdateClockDisplay();
+                            ESP_LOGI(TAG, "Clock UI time display updated after NTP sync");
+                        }
+                    });
+                    } else {
+                        ESP_LOGI(TAG, "Clock UI not visible, time update will occur when clock is shown");
                     }
                 } else {
                     ESP_LOGW(TAG, "Time sync failed: %s", message.c_str());

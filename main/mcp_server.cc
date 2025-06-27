@@ -150,19 +150,132 @@ void McpServer::AddCommonTools() {
     AddTool("rtc.sync_time",
         "手动触发NTP时间同步到RTC",
         PropertyList(),
-        [](const PropertyList& properties) -> ReturnValue {
+        [&board](const PropertyList& properties) -> ReturnValue {
             auto& time_sync_manager = TimeSyncManager::GetInstance();
+            
+            // 设置临时回调，确保手动同步后立即更新时钟UI
+            time_sync_manager.SetSyncCallback([&board](bool success, const std::string& message) {
+                if (success) {
+                    ESP_LOGI("McpServer", "Manual NTP sync completed successfully: %s", message.c_str());
+                    
+                    // 如果时钟界面可见，立即更新显示
+                    if (board.IsClockVisible()) {
+                        auto clock_ui = board.GetClockUI();
+                        if (clock_ui) {
+                            // 在主线程中更新时钟UI
+                            Application::GetInstance().Schedule([clock_ui]() {
+                                clock_ui->ForceUpdateDisplay();
+                                clock_ui->UpdateClockDisplay();
+                                ESP_LOGI("McpServer", "Clock UI updated after manual NTP sync");
+                            });
+                        }
+                    }
+                } else {
+                    ESP_LOGW("McpServer", "Manual NTP sync failed: %s", message.c_str());
+                }
+            });
+            
             time_sync_manager.TriggerNtpSync();
-            return "{\"success\": true, \"message\": \"NTP同步已启动\"}";
+            return "{\"success\": true, \"message\": \"NTP同步已启动，时钟界面将在同步完成后自动更新\"}";
         });
         
     AddTool("rtc.force_sync_time",
         "强制立即NTP时间同步（跳过系统空闲检查）",
         PropertyList(),
-        [](const PropertyList& properties) -> ReturnValue {
+        [&board](const PropertyList& properties) -> ReturnValue {
             auto& time_sync_manager = TimeSyncManager::GetInstance();
+            
+            // 设置临时回调，确保强制同步后立即更新时钟UI
+            time_sync_manager.SetSyncCallback([&board](bool success, const std::string& message) {
+                if (success) {
+                    ESP_LOGI("McpServer", "Force NTP sync completed successfully: %s", message.c_str());
+                    
+                    // 如果时钟界面可见，立即更新显示
+                    if (board.IsClockVisible()) {
+                        auto clock_ui = board.GetClockUI();
+                        if (clock_ui) {
+                            // 在主线程中更新时钟UI
+                            Application::GetInstance().Schedule([clock_ui]() {
+                                clock_ui->ForceUpdateDisplay();
+                                clock_ui->UpdateClockDisplay();
+                                ESP_LOGI("McpServer", "Clock UI updated after force NTP sync");
+                            });
+                        }
+                    }
+                } else {
+                    ESP_LOGW("McpServer", "Force NTP sync failed: %s", message.c_str());
+                }
+            });
+            
             time_sync_manager.ForceNtpSync();
-            return "{\"success\": true, \"message\": \"强制NTP同步已启动\"}";
+            return "{\"success\": true, \"message\": \"强制NTP同步已启动，时钟界面将在同步完成后自动更新\"}";
+        });
+
+    AddTool("test.clock_update_after_sync",
+        "测试工具：显示时钟界面并触发NTP同步，验证同步后时钟UI是否立即更新",
+        PropertyList(),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            ESP_LOGI("McpServer", "Starting clock update test after NTP sync");
+            
+            // 1. 先显示时钟界面
+            board.ShowClock();
+            
+            // 2. 等待1秒确保时钟界面显示完成
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            
+            // 3. 设置同步回调并触发NTP同步
+            auto& time_sync_manager = TimeSyncManager::GetInstance();
+            time_sync_manager.SetSyncCallback([&board](bool success, const std::string& message) {
+                ESP_LOGI("McpServer", "Test NTP sync result: %s - %s", success ? "SUCCESS" : "FAILED", message.c_str());
+                
+                if (success && board.IsClockVisible()) {
+                    auto clock_ui = board.GetClockUI();
+                    if (clock_ui) {
+                        Application::GetInstance().Schedule([clock_ui]() {
+                            clock_ui->ForceUpdateDisplay();
+                            clock_ui->UpdateClockDisplay();
+                            ESP_LOGI("McpServer", "TEST: Clock UI updated successfully after NTP sync");
+                        });
+                    }
+                }
+            });
+            
+            // 4. 触发强制NTP同步
+            time_sync_manager.ForceNtpSync();
+            
+            return "{\"success\": true, \"message\": \"测试已启动：时钟界面已显示，NTP同步已触发，将在同步完成后自动更新时间显示\"}";
+        });
+
+    AddTool("test.show_alarm_emotion",
+        "测试闹钟表情显示功能",
+        PropertyList({
+            Property("emotion_type", kPropertyTypeString)
+        }),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto clock_ui = board.GetClockUI();
+            
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            if (!board.IsClockVisible()) {
+                return "{\"success\": false, \"message\": \"Clock UI not visible. Please show clock first.\"}";
+            }
+            
+            try {
+                std::string emotion_type = properties["emotion_type"].value<std::string>();
+                
+                if (emotion_type.empty()) {
+                    return "{\"success\": false, \"message\": \"emotion_type cannot be empty\"}";
+                }
+                
+                // 设置闹钟表情
+                clock_ui->SetAlarmEmotion(emotion_type);
+                
+                return "{\"success\": true, \"message\": \"Alarm emotion set successfully\", \"emotion_type\": \"" + emotion_type + "\"}";
+            } catch (const std::exception& e) {
+                return "{\"success\": false, \"message\": \"Failed to get emotion_type parameter\"}";
+            }
         });
 
     AddTool("self.get_device_status",
@@ -254,7 +367,8 @@ void McpServer::AddCommonTools() {
         return "{\"success\": true, \"message\": \"Image display request sent\", \"url\": \"" + std::string(url) + "\"}";
     });
 
-    AddTool("show_emotion", "显示表情图片", 
+    AddTool("show_emotion", "显示表情图片,支持的表情名称：\n"
+            "- 表情名称: `neutral`, `happy`, `laughing`, `funny`, `sad`, `angry`, `crying`, `loving`, `embarrassed`, `surprised`, `shocked`, `thinking`, `winking`, `cool`, `relaxed`, `delicious`, `kissy`, `confident`, `sleepy`, `silly`, `confused`\n", 
         PropertyList({
             Property("emotion", kPropertyTypeString)
         }),
@@ -424,6 +538,219 @@ void McpServer::AddCommonTools() {
         [this](const PropertyList& properties) -> ReturnValue {
             int file_number = properties["file_number"].value<int>();
             return PlayMusicsd(file_number);
+        });
+
+    // 添加时钟壁纸相关工具
+    AddTool("clock.set_solid_wallpaper", "设置时钟纯色壁纸,支持的颜色格式：\n"
+            "- 颜色名称: `red`, `green`, `blue`, `yellow`, `purple`, `cyan`, `white`, `black`, `orange`, `pink`\n"
+            "- 十六进制格式: `#FF0000` (红色)\n"
+            "- 0x格式: `0xFF0000` (红色)", 
+        PropertyList({
+            Property("color", kPropertyTypeString)
+        }),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto display = board.GetDisplay();
+            if (!display) {
+                return "{\"success\": false, \"message\": \"Display not available\"}";
+            }
+            
+            // 获取时钟UI实例
+            auto clock_ui = board.GetClockUI();
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            std::string color_str = properties["color"].value<std::string>();
+            uint32_t color = 0x0000FF; // 默认蓝色
+            
+            // 解析颜色字符串（支持#RRGGBB和0xRRGGBB格式）
+            if (color_str.length() > 0) {
+                if (color_str[0] == '#' && color_str.length() == 7) {
+                    color = strtol(color_str.c_str() + 1, nullptr, 16);
+                } else if (color_str.substr(0, 2) == "0x" && color_str.length() == 8) {
+                    color = strtol(color_str.c_str(), nullptr, 16);
+                } else {
+                    // 支持颜色名称
+                    if (color_str == "red") color = 0xFF0000;
+                    else if (color_str == "green") color = 0x00FF00;
+                    else if (color_str == "blue") color = 0x0000FF;
+                    else if (color_str == "yellow") color = 0xFFFF00;
+                    else if (color_str == "purple") color = 0xFF00FF;
+                    else if (color_str == "cyan") color = 0x00FFFF;
+                    else if (color_str == "white") color = 0xFFFFFF;
+                    else if (color_str == "black") color = 0x000000;
+                    else if (color_str == "orange") color = 0xFF7F00;
+                    else if (color_str == "pink") color = 0xFF69B4;
+                    else {
+                        return "{\"success\": false, \"message\": \"Invalid color format. Use #RRGGBB, 0xRRGGBB, or color names\"}";
+                    }
+                }
+            }
+            
+            // 检查时钟UI是否可见，如果不可见就先保存配置
+            if (!board.IsClockVisible()) {
+                // 时钟UI不可见，只保存配置，下次显示时生效
+                clock_ui->SaveSolidColorWallpaperConfig(color);
+                return "{\"success\": true, \"message\": \"Wallpaper config saved. Will be applied when clock is shown.\", \"color\": \"" + color_str + "\"}";
+            } else {
+                // 时钟UI可见，直接应用壁纸
+                clock_ui->SetSolidColorWallpaper(color);
+                return "{\"success\": true, \"message\": \"Solid color wallpaper set and applied\", \"color\": \"" + color_str + "\"}";
+            }
+        });
+
+    AddTool("clock.set_image_wallpaper", "设置时钟图片壁纸（从SD卡）,支持的图片名称：- 图片名称: `BJ`, `BJ2`, `BJ3`, `BJ4`, `BJ5`, `BJ6`, `BJ7`, `BJ8`, `BJ9`, `BJ10`\n", 
+        PropertyList({
+            Property("image_name", kPropertyTypeString)
+        }),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto clock_ui = board.GetClockUI();
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            std::string image_name = properties["image_name"].value<std::string>();
+            
+            // 验证文件名（不超过8位，大写）
+            if (image_name.length() > 8) {
+                return "{\"success\": false, \"message\": \"Image name too long (max 8 characters)\"}";
+            }
+            
+            // 转换为大写
+            std::transform(image_name.begin(), image_name.end(), image_name.begin(), ::toupper);
+            
+            // 检查时钟UI是否可见
+            if (!board.IsClockVisible()) {
+                clock_ui->SaveImageWallpaperConfig(image_name.c_str());
+                return "{\"success\": true, \"message\": \"Image wallpaper config saved. Will be applied when clock is shown.\", \"image_name\": \"" + image_name + "\"}";
+            } else {
+                clock_ui->SetImageWallpaper(image_name.c_str());
+                return "{\"success\": true, \"message\": \"Image wallpaper set and applied\", \"image_name\": \"" + image_name + "\"}";
+            }
+        });
+
+    AddTool("clock.set_network_wallpaper", "设置时钟网络壁纸,url格式：\n"
+            "- 网络图片URL: `http://www.replime.cn/ejpg/图片名称.jpg`，图片默认名称或没有指定时：`happy` ，图片名称支持：`happy`  `laughing`  `funny`  `sad`  `angry`  `crying`  `loving`  `embarrassed`  `surprised`  `shocked`  `thinking`  `winking`  `cool`  `relaxed`  `delicious`  `kissy`  `confident`  `sleepy`  `silly`  `confused`\n", 
+        PropertyList({
+            Property("url", kPropertyTypeString)
+        }),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto clock_ui = board.GetClockUI();
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            std::string url = properties["url"].value<std::string>();
+            
+            // 检查时钟UI是否可见
+            if (!board.IsClockVisible()) {
+                clock_ui->SaveNetworkWallpaperConfig(url.c_str());
+                return "{\"success\": true, \"message\": \"Network wallpaper config saved. Download will start when clock is shown.\", \"url\": \"" + url + "\"}";
+            } else {
+                clock_ui->SetNetworkWallpaper(url.c_str());
+                return "{\"success\": true, \"message\": \"Network wallpaper download started\", \"url\": \"" + url + "\"}";
+            }
+        });
+
+    AddTool("clock.clear_wallpaper", "清除时钟壁纸", 
+        PropertyList(),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto clock_ui = board.GetClockUI();
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            // 检查时钟UI是否可见
+            if (!board.IsClockVisible()) {
+                clock_ui->SaveClearWallpaperConfig();
+                return "{\"success\": true, \"message\": \"Wallpaper config cleared. Will take effect when clock is shown.\"}";
+            } else {
+                clock_ui->ClearWallpaper();
+                return "{\"success\": true, \"message\": \"Wallpaper cleared\"}";
+            }
+        });
+
+    AddTool("clock.set_animation", "设置时钟动画（从SD卡）", 
+        PropertyList({
+            Property("animation_name", kPropertyTypeString)
+        }),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto clock_ui = board.GetClockUI();
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            std::string anim_name = properties["animation_name"].value<std::string>();
+            
+            // 检查时钟UI是否可见
+            if (!board.IsClockVisible()) {
+                clock_ui->SaveAnimationFromSDConfig(anim_name.c_str());
+                return "{\"success\": true, \"message\": \"Animation config saved. Will be applied when clock is shown.\", \"animation_name\": \"" + anim_name + "\"}";
+            } else {
+                clock_ui->SetAnimationFromSD(anim_name.c_str());
+                return "{\"success\": true, \"message\": \"Animation set and applied\", \"animation_name\": \"" + anim_name + "\"}";
+            }
+        });
+
+    AddTool("clock.set_network_animation", "设置时钟网络动画", 
+        PropertyList({
+            Property("url", kPropertyTypeString)
+        }),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto clock_ui = board.GetClockUI();
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            std::string url = properties["url"].value<std::string>();
+            
+            // 检查时钟UI是否可见
+            if (!board.IsClockVisible()) {
+                clock_ui->SaveAnimationFromNetworkConfig(url.c_str());
+                return "{\"success\": true, \"message\": \"Network animation config saved. Download will start when clock is shown.\", \"url\": \"" + url + "\"}";
+            } else {
+                clock_ui->SetAnimationFromNetwork(url.c_str());
+                return "{\"success\": true, \"message\": \"Network animation download started\", \"url\": \"" + url + "\"}";
+            }
+        });
+
+    AddTool("clock.show_animation", "显示/隐藏时钟动画", 
+        PropertyList({
+            Property("show", kPropertyTypeBoolean, true)
+        }),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            if (!board.IsClockVisible()) {
+                return "{\"success\": false, \"message\": \"Clock UI not visible\"}";
+            }
+            
+            auto clock_ui = board.GetClockUI();
+            
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            bool show = properties["show"].value<bool>();
+            clock_ui->ShowAnimation(show);
+            
+            return "{\"success\": true, \"message\": \"Animation " + std::string(show ? "shown" : "hidden") + "\"}";
+        });
+
+    AddTool("clock.clear_animation", "清除时钟动画", 
+        PropertyList(),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            if (!board.IsClockVisible()) {
+                return "{\"success\": false, \"message\": \"Clock UI not visible\"}";
+            }
+            
+            auto clock_ui = board.GetClockUI();
+            
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            clock_ui->ClearAnimation();
+            
+            return "{\"success\": true, \"message\": \"Animation cleared\"}";
         });
 
      // Restore the original tools list to the end of the tools list

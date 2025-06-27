@@ -1,6 +1,7 @@
 #include "clock_ui.h"
 #include "time_sync_manager.h"
 #include "display/spi_lcd_anim_display.h"  // 新增：用于资源管理
+#include "board.h"  // 新增：用于Board类访问
 #include <esp_log.h>
 #include <esp_task_wdt.h>
 #include <time.h>
@@ -8,11 +9,14 @@
 #include <algorithm>  // 新增：用于std::transform
 #include <cctype>     // 新增：用于::tolower
 #include <cstring>    // 新增：用于memcpy
+#include <cinttypes>  // 新增：用于PRIx32
 #include "display.h"
 #include "pcf8563_rtc.h"
 #include "alarm_manager.h"
 #include "font_awesome_symbols.h"  // 新增：包含图标符号定义
 #include <lvgl.h>
+#include "tjpgd.h"              // 新增：TJPGD JPG解码库
+#include "esp_http_client.h"     // 新增：HTTP客户端
 
 static const char* TAG = "ClockUI";
 
@@ -22,6 +26,68 @@ LV_FONT_DECLARE(font_puhui_20_4);  // 中等字体
 LV_FONT_DECLARE(font_puhui_40_4);  // 中等字体
 // LV_FONT_DECLARE(font_puhui_16_4);  // 用于日期
 // LV_FONT_DECLARE(font_puhui_14_1);  // 最小字体，用于AM/PM
+
+// 新增：JPG解码上下文结构
+struct ClockJpegDecodeContext {
+    const uint8_t* src_data;
+    size_t src_size;
+    size_t src_pos;
+    uint8_t* output_buffer;
+    size_t output_size;
+    size_t output_pos;
+};
+
+// 新增：TJPGD输入回调函数
+static UINT clock_tjpgd_input_callback(JDEC* jd, BYTE* buff, UINT nbyte) {
+    ClockJpegDecodeContext* ctx = (ClockJpegDecodeContext*)jd->device;
+    
+    if (buff) {
+        // 读取数据
+        UINT bytes_to_read = (UINT)std::min((size_t)nbyte, ctx->src_size - ctx->src_pos);
+        memcpy(buff, ctx->src_data + ctx->src_pos, bytes_to_read);
+        ctx->src_pos += bytes_to_read;
+        return bytes_to_read;
+    } else {
+        // 跳过数据
+        ctx->src_pos = std::min(ctx->src_pos + (size_t)nbyte, ctx->src_size);
+        return nbyte;
+    }
+}
+
+// 新增：TJPGD输出回调函数
+static UINT clock_tjpgd_output_callback(JDEC* jd, void* bitmap, JRECT* rect) {
+    ClockJpegDecodeContext* ctx = (ClockJpegDecodeContext*)jd->device;
+    
+    if (!bitmap || !ctx->output_buffer) {
+        return 1;
+    }
+    
+    // 计算输出区域
+    int rect_width = rect->right - rect->left + 1;
+    int rect_height = rect->bottom - rect->top + 1;
+    
+    // 将RGB数据复制到输出缓冲区
+    BYTE* src_line = (BYTE*)bitmap;
+    
+    for (int y = 0; y < rect_height; y++) {
+        int dst_y = rect->top + y;
+        if (dst_y >= 0 && dst_y < (int)jd->height) {
+            size_t dst_offset = (dst_y * jd->width + rect->left) * 3;
+            size_t src_offset = y * rect_width * 3;
+            
+            if (dst_offset + rect_width * 3 <= ctx->output_size) {
+                memcpy(ctx->output_buffer + dst_offset, src_line + src_offset, rect_width * 3);
+            }
+        }
+    }
+    
+    return 1;
+}
+
+// 新增：RGB888转RGB565函数
+uint16_t ClockUI::RGB888ToRGB565(uint8_t r, uint8_t g, uint8_t b) {
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
 
 ClockUI::ClockUI() : 
     display_(nullptr),
@@ -40,13 +106,22 @@ ClockUI::ClockUI() :
     alarm_text_label_(nullptr),
     notification_icon_label_(nullptr),
     notification_text_label_(nullptr),
+    wallpaper_img_(nullptr),
+    animation_label_(nullptr),
     text_font_(nullptr),
     icon_font_(nullptr),
     emoji_font_(nullptr),
     last_displayed_hour_(-1),
     last_displayed_minute_(-1),
     last_displayed_day_(-1),
-    last_notification_state_(false) {
+    last_notification_state_(false),
+    animation_visible_(false),
+    animation_frame_(0),
+    animation_timer_(nullptr),
+    wallpaper_type_(WALLPAPER_NONE),
+    wallpaper_color_(0x000000),
+    wallpaper_image_name_(""),
+    wallpaper_network_url_("") {
     ESP_LOGI(TAG, "ClockUI created (graphical version)");
 }
 
@@ -97,15 +172,28 @@ void ClockUI::CreateClockUI() {
     }
     clock_container_ = container;
     
-    // 设置容器为全屏，完全矩形背景
+    // 设置容器为全屏，透明背景以显示壁纸
     lv_obj_set_size(container, LV_HOR_RES, LV_VER_RES);
     lv_obj_set_pos(container, 0, 0);
     lv_obj_set_style_bg_color(container, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0); // 改为透明，让壁纸显示
     lv_obj_set_style_border_width(container, 0, 0);
     lv_obj_set_style_pad_all(container, 0, 0);
     lv_obj_set_style_radius(container, 0, 0);
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+    
+    // 创建全屏壁纸图片（作为背景层）
+    lv_obj_t* wallpaper = lv_img_create(container);
+    if (wallpaper) {
+        wallpaper_img_ = wallpaper;
+        lv_obj_set_size(wallpaper, LV_HOR_RES, LV_VER_RES);
+        lv_obj_set_pos(wallpaper, 0, 0);
+        lv_obj_set_style_bg_opa(wallpaper, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(wallpaper, 0, 0);
+        lv_obj_set_style_pad_all(wallpaper, 0, 0);
+        lv_obj_add_flag(wallpaper, LV_OBJ_FLAG_HIDDEN); // 默认隐藏，等待设置壁纸
+        ESP_LOGI(TAG, "Wallpaper image created");
+    }
     
     // 创建时间标签（简化版本）
     lv_obj_t* time_lbl = lv_label_create(container);
@@ -124,10 +212,25 @@ void ClockUI::CreateClockUI() {
         lv_obj_set_style_text_color(time_am_pm, lv_color_white(), 0);
         lv_obj_set_style_text_font(time_am_pm, &font_puhui_20_4, 0);
         lv_obj_set_style_text_align(time_am_pm, LV_TEXT_ALIGN_LEFT, 0);
-        lv_obj_set_pos(time_am_pm,  LV_HOR_RES/2 + 58, LV_VER_RES / 2 - 30-30);
+        lv_obj_set_pos(time_am_pm,  LV_HOR_RES/2 + 58, LV_VER_RES / 2 - 10-30);
         lv_obj_set_size(time_am_pm, LV_HOR_RES, LV_SIZE_CONTENT);
         lv_label_set_text(time_am_pm, "上午");
     }
+    }
+    
+    // 创建64*64动画标签（在时间下面）
+    lv_obj_t* anim_lbl = lv_img_create(container);
+    if (anim_lbl) {
+        animation_label_ = anim_lbl;
+        lv_obj_set_size(anim_lbl, 64, 64);
+        // 居中显示，位置在时间标签下方
+        lv_obj_set_pos(anim_lbl, (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 + 30);
+        lv_obj_set_style_bg_opa(anim_lbl, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(anim_lbl, 0, 0);
+        lv_obj_set_style_pad_all(anim_lbl, 0, 0);
+        lv_obj_set_style_radius(anim_lbl, 8, 0); // 轻微的圆角
+        lv_obj_add_flag(anim_lbl, LV_OBJ_FLAG_HIDDEN); // 默认隐藏
+        ESP_LOGI(TAG, "64x64 animation label created at center position");
     }
     
     // 创建日期标签（简化版本）
@@ -165,7 +268,7 @@ void ClockUI::CreateClockUI() {
             lv_obj_set_style_text_color(icon_lbl, lv_color_make(255, 165, 0), 0); // 橙色
             lv_obj_set_style_text_font(icon_lbl, icon_font_ ? (const lv_font_t*)icon_font_ : &font_puhui_20_4, 0);
             lv_label_set_text(icon_lbl, "\uF071"); // Font Awesome 闹钟图标
-            lv_obj_set_style_pad_right(icon_lbl, 8, 0); // 与文字间距
+            lv_obj_set_style_pad_right(icon_lbl, 5, 0); // 与文字间距
         }
         
         // 在容器内创建文字标签
@@ -203,7 +306,7 @@ void ClockUI::CreateClockUI() {
             lv_obj_set_style_text_color(notif_icon_lbl, lv_color_white(), 0); // 白色
             lv_obj_set_style_text_font(notif_icon_lbl, icon_font_ ? (const lv_font_t*)icon_font_ : &font_puhui_20_4, 0);
             lv_label_set_text(notif_icon_lbl, "\uF0F3"); // Font Awesome 铃铛图标
-            lv_obj_set_style_pad_right(notif_icon_lbl, 8, 0); // 与文字间距
+            lv_obj_set_style_pad_right(notif_icon_lbl, 5, 0); // 与文字间距
         }
         
         // 在容器内创建文字标签
@@ -241,6 +344,14 @@ void ClockUI::DestroyClockUI() {
     alarm_text_label_ = nullptr;  // 指向容器内的文字标签
     notification_icon_label_ = nullptr;  // 现在指向通知容器
     notification_text_label_ = nullptr;  // 指向容器内的文字标签
+    wallpaper_img_ = nullptr;  // 壁纸图片
+    animation_label_ = nullptr;  // 动画标签
+    
+    // 停止动画定时器
+    if (animation_timer_) {
+        // 这里应该停止定时器，具体实现取决于定时器类型
+        animation_timer_ = nullptr;
+    }
     
     // 等待一帧时间，确保所有异步操作完成
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -288,6 +399,16 @@ void ClockUI::Show() {
                 // 强制重置显示，确保首次显示正确更新
                 self->ForceUpdateDisplay();
                 
+                // 加载保存的壁纸和动画配置
+                self->LoadWallpaperConfig();
+                self->LoadAnimationConfig();
+                
+                                  // 先测试纯色背景
+                //   self->TestWallpaperWithColor();
+                  
+                //   // 延迟3秒后尝试加载图片壁纸
+                //   vTaskDelay(pdMS_TO_TICKS(3000));
+                //   self->SetWallpaper("/sdcard/BJ.JPG");
                 ESP_LOGI(TAG, "Clock UI created and shown asynchronously with forced update");
                 ESP_LOGI(TAG, "Clock UI components ready for alarm display");
             }
@@ -325,15 +446,20 @@ void ClockUI::SetRtc(Pcf8563Rtc* rtc) {
 }
 
 void ClockUI::SetNextAlarm(const std::string& alarm_text) {
+    // 调用const char*版本
+    SetNextAlarm(alarm_text.c_str());
+}
+
+void ClockUI::SetNextAlarm(const char* next_alarm_time) {
     // 新版本：使用容器结构，alarm_icon_label_现在指向容器
     if (!alarm_icon_label_) {
         ESP_LOGE(TAG, "SetNextAlarm: alarm container is null!");
         return;
     }
     
-    ESP_LOGI(TAG, "SetNextAlarm called with text: '%s'", alarm_text.c_str());
+    ESP_LOGI(TAG, "SetNextAlarm called with text: '%s'", next_alarm_time ? next_alarm_time : "NULL");
     
-    if (alarm_text.empty()) {
+    if (!next_alarm_time || strlen(next_alarm_time) == 0) {
         // 隐藏闹钟容器
         lv_obj_add_flag(alarm_icon_label_, LV_OBJ_FLAG_HIDDEN);
         ESP_LOGI(TAG, "SetNextAlarm: Alarm container hidden (empty text)");
@@ -341,14 +467,14 @@ void ClockUI::SetNextAlarm(const std::string& alarm_text) {
         // 更新文字标签内容（闹钟时间）
         if (alarm_text_label_ && lv_obj_is_valid(alarm_text_label_)) {
             static char display_text[128];
-            snprintf(display_text, sizeof(display_text), " %s", alarm_text.c_str());
+            snprintf(display_text, sizeof(display_text), "%s", next_alarm_time);
             lv_label_set_text(alarm_text_label_, display_text);
         }
         
         // 显示闹钟容器
         if (lv_obj_is_valid(alarm_icon_label_)) {
             lv_obj_clear_flag(alarm_icon_label_, LV_OBJ_FLAG_HIDDEN);
-            ESP_LOGI(TAG, "SetNextAlarm: Alarm container shown with text: '%s'", alarm_text.c_str());
+            ESP_LOGI(TAG, "SetNextAlarm: Alarm container shown with text: '%s'", next_alarm_time);
         } else {
             ESP_LOGE(TAG, "SetNextAlarm: alarm container is not a valid LVGL object!");
         }
@@ -392,6 +518,8 @@ void ClockUI::HideAlarmNotification() {
     
     // 隐藏通知容器
     lv_obj_add_flag(notification_icon_label_, LV_OBJ_FLAG_HIDDEN);
+    //因擦表情标签
+    lv_obj_add_flag(animation_label_, LV_OBJ_FLAG_HIDDEN);
     notification_visible_ = false;
     
     ESP_LOGI(TAG, "Alarm notification container hidden");
@@ -554,7 +682,7 @@ void ClockUI::UpdateTimeLabel() {
         // 更新时间显示 - 使用安全的snprintf
         // int ret = snprintf(time_str, sizeof(time_str), "%d:%02d %s", hour, minute, am_pm);
         int ret = snprintf(time_str, sizeof(time_str), "%02d:%02d", hour, minute);
-        int ret2 = snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", am_pm);
+        snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", am_pm);
         if (ret >= sizeof(time_str)) {
             ESP_LOGW(TAG, "UpdateTimeLabel: Time string truncated");
             return;
@@ -710,8 +838,83 @@ void ClockUI::UpdateAlarmEmotionLabel() {
 }
 
 void ClockUI::SetAlarmEmotion(const std::string& emotion) {
-    // 简化实现，暂时移除表情设置逻辑
-    return;
+    if (!animation_label_ || !is_visible_) {
+        ESP_LOGD(TAG, "SetAlarmEmotion: animation_label_ is null or not visible");
+        return;
+    }
+    
+    // 检查LVGL对象有效性
+    if (!lv_obj_is_valid(animation_label_)) {
+        ESP_LOGW(TAG, "SetAlarmEmotion: animation_label_ object is invalid");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Setting alarm emotion: %s", emotion.c_str());
+    
+    if (emotion.empty()) {
+        // 隐藏表情动画
+        lv_obj_add_flag(animation_label_, LV_OBJ_FLAG_HIDDEN);
+        current_alarm_emotion_ = "";
+        ESP_LOGI(TAG, "Alarm emotion hidden (empty emotion)");
+        return;
+    }
+    
+    // 根据闹钟描述获取合适的表情
+    std::string emotion_char = GetEmotionForAlarmType(emotion);
+    current_alarm_emotion_ = emotion_char;
+    
+    // 将动画标签临时用作表情显示（将来可以替换为真正的动画）
+    // 首先确保动画标签变成文本标签模式
+    
+    // 删除当前的图片源（如果有的话）
+    lv_img_set_src(animation_label_, nullptr);
+    
+    // 创建一个文本标签来显示表情
+    static lv_obj_t* emotion_text_label = nullptr;
+    
+    // 如果已经有表情文字标签，先删除它
+    if (emotion_text_label && lv_obj_is_valid(emotion_text_label)) {
+        lv_obj_del(emotion_text_label);
+        emotion_text_label = nullptr;
+    }
+    
+    // 在动画标签的父容器中创建新的表情文字标签
+    lv_obj_t* parent = lv_obj_get_parent(animation_label_);
+    if (parent && lv_obj_is_valid(parent)) {
+        emotion_text_label = lv_label_create(parent);
+        if (emotion_text_label) {
+            // 设置表情文字的样式和位置
+            lv_obj_set_style_text_color(emotion_text_label, lv_color_white(), 0);
+            
+            // 使用表情字体（如果可用），否则使用默认字体
+            if (emoji_font_) {
+                lv_obj_set_style_text_font(emotion_text_label, (const lv_font_t*)emoji_font_, 0);
+            } else {
+                // 如果没有表情字体，使用大一点的文字字体
+                lv_obj_set_style_text_font(emotion_text_label, &font_puhui_40_4, 0);
+            }
+            
+            lv_obj_set_style_text_align(emotion_text_label, LV_TEXT_ALIGN_CENTER, 0);
+            
+            // 设置位置和大小与动画标签相同
+            lv_obj_set_size(emotion_text_label, 64, 64);
+            lv_obj_set_pos(emotion_text_label, (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 + 30);
+            
+            // 设置表情文字
+            lv_label_set_text(emotion_text_label, emotion_char.c_str());
+            
+            // 居中对齐
+            lv_obj_set_style_text_align(emotion_text_label, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_center(emotion_text_label);
+            
+            ESP_LOGI(TAG, "Alarm emotion displayed: %s (character: %s)", emotion.c_str(), emotion_char.c_str());
+        } else {
+            ESP_LOGE(TAG, "Failed to create emotion text label");
+        }
+    }
+    
+    // 隐藏原来的动画标签（避免冲突）
+    lv_obj_add_flag(animation_label_, LV_OBJ_FLAG_HIDDEN);
 }
 
 std::string ClockUI::GetEmotionForAlarmType(const std::string& alarm_text) {
@@ -839,4 +1042,866 @@ void ClockUI::DrawFilledRect(unsigned char* buffer, int buf_width, int buf_heigh
 
 unsigned short ClockUI::RGB888toRGB565(unsigned char r, unsigned char g, unsigned char b) {
     return 0; // Simplified
-} 
+}
+
+// 设置壁纸
+// clock_ui->SetWallpaper("/sdcard/wallpaper.jpg");
+
+// // 设置并显示动画
+// clock_ui->SetAnimation("/sdcard/heart_animation");
+// clock_ui->ShowAnimation(true);
+// 新增：设置壁纸
+void ClockUI::SetWallpaper(const char* image_path_or_url) {
+    if (!wallpaper_img_ || !image_path_or_url) {
+        ESP_LOGE(TAG, "SetWallpaper: wallpaper_img_ is null or invalid path");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Setting wallpaper: %s", image_path_or_url);
+    
+    // 检查壁纸对象是否有效
+    if (!lv_obj_is_valid(wallpaper_img_)) {
+        ESP_LOGE(TAG, "SetWallpaper: wallpaper_img_ object is invalid");
+        return;
+    }
+    
+    // 检查是否是URL（以http开头）
+    if (strncmp(image_path_or_url, "http", 4) == 0) {
+        // URL壁纸，这里需要下载图片并设置
+        // 可以参考SpiLcdAnimDisplay中的下载逻辑
+        ESP_LOGI(TAG, "URL wallpaper not implemented yet: %s", image_path_or_url);
+        return;
+    }
+    
+    // 检查文件是否存在
+    FILE* file = fopen(image_path_or_url, "rb");
+    if (!file) {
+        ESP_LOGE(TAG, "SetWallpaper: File does not exist: %s", image_path_or_url);
+        return;
+    }
+    
+    // 获取文件大小
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fclose(file);
+    
+    if (file_size <= 0) {
+        ESP_LOGE(TAG, "SetWallpaper: File is empty or invalid: %s (size: %ld)", image_path_or_url, file_size);
+        return;
+    }
+    
+    ESP_LOGI(TAG, "SetWallpaper: File found, size: %ld bytes", file_size);
+    
+    // 本地文件路径
+    current_wallpaper_ = image_path_or_url;
+    
+    // 设置壁纸位置和尺寸信息（调试） - 修复格式化问题
+    ESP_LOGI(TAG, "SetWallpaper: Object position before: x=%ld, y=%ld, w=%ld, h=%ld", 
+             (long)lv_obj_get_x(wallpaper_img_), (long)lv_obj_get_y(wallpaper_img_), 
+             (long)lv_obj_get_width(wallpaper_img_), (long)lv_obj_get_height(wallpaper_img_));
+    
+    // 确保壁纸在最底层
+    lv_obj_move_to_index(wallpaper_img_, 0);
+    
+    // 重新设置尺寸和位置，确保覆盖全屏
+    lv_obj_set_size(wallpaper_img_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_pos(wallpaper_img_, 0, 0);
+    
+    // 检查文件扩展名，LVGL可能不支持JPG
+    const char* file_ext = strrchr(image_path_or_url, '.');
+    bool is_jpg = file_ext && (strcasecmp(file_ext, ".jpg") == 0 || strcasecmp(file_ext, ".jpeg") == 0);
+    
+    if (is_jpg) {
+        ESP_LOGW(TAG, "JPG files may not be supported by LVGL, using fallback test");
+        // 使用纯色背景作为测试
+        lv_obj_set_style_bg_color(wallpaper_img_, lv_color_hex(0xFF0000), 0); // 红色背景
+        lv_obj_set_style_bg_opa(wallpaper_img_, LV_OPA_COVER, 0);
+    } else {
+        // 尝试加载本地图片文件（非JPG格式）
+        lv_img_set_src(wallpaper_img_, image_path_or_url);
+        
+        // 检查图片是否加载成功
+        const void* img_src = lv_img_get_src(wallpaper_img_);
+        if (!img_src) {
+            ESP_LOGW(TAG, "Failed to load image, using fallback color");
+            // 使用纯色背景作为备用
+            lv_obj_set_style_bg_color(wallpaper_img_, lv_color_hex(0x00FF00), 0); // 绿色背景
+            lv_obj_set_style_bg_opa(wallpaper_img_, LV_OPA_COVER, 0);
+        } else {
+            ESP_LOGI(TAG, "SetWallpaper: Image source loaded successfully");
+        }
+    }
+    
+    // 显示壁纸
+    lv_obj_clear_flag(wallpaper_img_, LV_OBJ_FLAG_HIDDEN);
+    
+    // 确保对象类型设置正确
+    lv_obj_set_style_bg_opa(wallpaper_img_, LV_OPA_COVER, 0);
+    
+    // 强制刷新显示
+    lv_obj_invalidate(wallpaper_img_);
+    
+    ESP_LOGI(TAG, "SetWallpaper: Object position after: x=%ld, y=%ld, w=%ld, h=%ld, visible=%d", 
+             (long)lv_obj_get_x(wallpaper_img_), (long)lv_obj_get_y(wallpaper_img_), 
+             (long)lv_obj_get_width(wallpaper_img_), (long)lv_obj_get_height(wallpaper_img_),
+             !lv_obj_has_flag(wallpaper_img_, LV_OBJ_FLAG_HIDDEN));
+    
+    ESP_LOGI(TAG, "Wallpaper set successfully: %s", image_path_or_url);
+}
+
+// 新增：测试壁纸功能的辅助方法
+void ClockUI::TestWallpaperWithColor() {
+    if (!wallpaper_img_) {
+        ESP_LOGE(TAG, "TestWallpaperWithColor: wallpaper_img_ is null");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Testing wallpaper with solid color");
+    
+    // 创建一个简单的纯色图片作为测试
+    lv_obj_set_size(wallpaper_img_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_pos(wallpaper_img_, 0, 0);
+    lv_obj_set_style_bg_color(wallpaper_img_, lv_color_hex(0x0000FF), 0); // 蓝色
+    lv_obj_set_style_bg_opa(wallpaper_img_, LV_OPA_COVER, 0); // 不透明
+    lv_obj_clear_flag(wallpaper_img_, LV_OBJ_FLAG_HIDDEN);
+    
+    // 确保在最底层
+    lv_obj_move_to_index(wallpaper_img_, 0);
+    
+    ESP_LOGI(TAG, "Test wallpaper (blue background) set");
+}
+
+// 新增：设置动画内容
+void ClockUI::SetAnimation(const char* animation_path) {
+    if (!animation_label_ || !animation_path) {
+        ESP_LOGE(TAG, "SetAnimation: animation_label_ is null or invalid path");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Setting animation: %s", animation_path);
+    
+    current_animation_ = animation_path;
+    animation_frame_ = 0;
+    
+    // 设置初始帧
+    lv_img_set_src(animation_label_, animation_path);
+    
+    ESP_LOGI(TAG, "Animation set successfully: %s", animation_path);
+}
+
+// 新增：显示/隐藏动画
+void ClockUI::ShowAnimation(bool show) {
+    if (!animation_label_) {
+        ESP_LOGE(TAG, "ShowAnimation: animation_label_ is null");
+        return;
+    }
+    
+    animation_visible_ = show;
+    
+    if (show) {
+        lv_obj_clear_flag(animation_label_, LV_OBJ_FLAG_HIDDEN);
+        ESP_LOGI(TAG, "Animation shown");
+    } else {
+        lv_obj_add_flag(animation_label_, LV_OBJ_FLAG_HIDDEN);
+        ESP_LOGI(TAG, "Animation hidden");
+    }
+}
+
+// 新增：更新动画帧
+void ClockUI::UpdateAnimation() {
+    if (!animation_label_ || !animation_visible_ || current_animation_.empty()) {
+        return;
+    }
+    
+    // 这里可以实现动画帧的更新逻辑
+    // 例如：切换到下一帧，循环播放等
+    animation_frame_++;
+    
+    // 构建帧文件路径（假设动画文件以数字命名）
+    char frame_path[256];
+    snprintf(frame_path, sizeof(frame_path), "%s_%03d.bin", current_animation_.c_str(), animation_frame_);
+    
+    // 尝试加载帧文件
+    // 这里需要根据实际的动画文件格式来实现
+    
+    ESP_LOGD(TAG, "Animation frame updated: %d", animation_frame_);
+}
+
+// 配置文件路径定义
+const char* ClockUI::WALLPAPER_CONFIG_FILE = "/sdcard/WALL.CFG";
+const char* ClockUI::ANIMATION_CONFIG_FILE = "/sdcard/ANIM.CFG";
+
+// 新增：设置纯色壁纸
+void ClockUI::SetSolidColorWallpaper(uint32_t color) {
+    if (!wallpaper_img_) {
+        ESP_LOGE(TAG, "SetSolidColorWallpaper: wallpaper_img_ is null");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Setting solid color wallpaper: 0x%06" PRIx32, color);
+    
+    wallpaper_type_ = WALLPAPER_SOLID_COLOR;
+    wallpaper_color_ = color;
+    wallpaper_image_name_ = "";
+    wallpaper_network_url_ = "";
+    
+    // 设置纯色背景
+    lv_obj_set_size(wallpaper_img_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_pos(wallpaper_img_, 0, 0);
+    lv_obj_set_style_bg_color(wallpaper_img_, lv_color_hex(color), 0);
+    lv_obj_set_style_bg_opa(wallpaper_img_, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(wallpaper_img_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(wallpaper_img_, 0);
+    
+    // 保存配置
+    SaveWallpaperConfig();
+    
+    ESP_LOGI(TAG, "Solid color wallpaper set successfully");
+}
+
+// 新增：设置图片壁纸（SD卡）
+void ClockUI::SetImageWallpaper(const char* image_name) {
+    if (!wallpaper_img_ || !image_name) {
+        ESP_LOGE(TAG, "SetImageWallpaper: invalid parameters");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Setting image wallpaper from SD: %s", image_name);
+    
+    // 构建完整文件路径（支持8位大写文件名）
+    char file_path[64];
+    snprintf(file_path, sizeof(file_path), "/sdcard/%s.JPG", image_name);
+    
+    // 检查文件是否存在
+    FILE* file = fopen(file_path, "rb");
+    if (!file) {
+        ESP_LOGE(TAG, "Image file not found: %s", file_path);
+        return;
+    }
+    fclose(file);
+    
+    // 解码JPG图片
+    uint8_t* rgb565_data = nullptr;
+    int width = 0, height = 0;
+    
+    if (DecodeJpgFromSD(file_path, &rgb565_data, &width, &height)) {
+        wallpaper_type_ = WALLPAPER_SD_IMAGE;
+        wallpaper_image_name_ = image_name;
+        wallpaper_color_ = 0;
+        wallpaper_network_url_ = "";
+        
+        // 创建LVGL图像描述符
+        static lv_img_dsc_t img_dsc;
+        img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+        img_dsc.header.w = width;
+        img_dsc.header.h = height;
+        img_dsc.data_size = width * height * 2;
+        img_dsc.data = rgb565_data;
+        
+        // 设置图片
+        lv_obj_set_size(wallpaper_img_, LV_HOR_RES, LV_VER_RES);
+        lv_obj_set_pos(wallpaper_img_, 0, 0);
+        lv_img_set_src(wallpaper_img_, &img_dsc);
+        lv_obj_clear_flag(wallpaper_img_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_to_index(wallpaper_img_, 0);
+        
+        // 保存配置
+        SaveWallpaperConfig();
+        
+        ESP_LOGI(TAG, "Image wallpaper set successfully: %s (%dx%d)", image_name, width, height);
+    } else {
+        ESP_LOGE(TAG, "Failed to decode JPG image: %s", file_path);
+    }
+}
+
+// 新增：设置网络壁纸
+void ClockUI::SetNetworkWallpaper(const char* url) {
+    if (!wallpaper_img_ || !url) {
+        ESP_LOGE(TAG, "SetNetworkWallpaper: invalid parameters");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Setting network wallpaper: %s", url);
+    
+    // 生成本地文件名（取URL最后8个字符作为文件名）
+    std::string url_str(url);
+    size_t pos = url_str.find_last_of('/');
+    std::string filename = "NETWK";
+    if (pos != std::string::npos && pos + 1 < url_str.length()) {
+        std::string name = url_str.substr(pos + 1);
+        if (name.length() > 8) {
+            name = name.substr(0, 8);
+        }
+        filename = name;
+    }
+    
+    // 转换为大写
+    std::transform(filename.begin(), filename.end(), filename.begin(), ::toupper);
+    
+    // 先尝试从SD卡加载
+    char local_path[64];
+    snprintf(local_path, sizeof(local_path), "/sdcard/%s.JPG", filename.c_str());
+    
+    FILE* file = fopen(local_path, "rb");
+    if (file) {
+        fclose(file);
+        ESP_LOGI(TAG, "Found cached image, using local file: %s", local_path);
+        SetImageWallpaper(filename.c_str());
+        return;
+    }
+    
+    // 从网络下载
+    if (DownloadAndDecodeJpg(url, filename.c_str())) {
+        wallpaper_type_ = WALLPAPER_NETWORK_IMAGE;
+        wallpaper_network_url_ = url;
+        wallpaper_image_name_ = filename;
+        wallpaper_color_ = 0;
+        
+        // 下载成功后加载图片
+        SetImageWallpaper(filename.c_str());
+        
+        ESP_LOGI(TAG, "Network wallpaper downloaded and set successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to download network wallpaper: %s", url);
+    }
+}
+
+// 新增：清除壁纸
+void ClockUI::ClearWallpaper() {
+    if (!wallpaper_img_) {
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Clearing wallpaper");
+    
+    wallpaper_type_ = WALLPAPER_NONE;
+    wallpaper_color_ = 0;
+    wallpaper_image_name_ = "";
+    wallpaper_network_url_ = "";
+    
+    // 隐藏壁纸
+    lv_obj_add_flag(wallpaper_img_, LV_OBJ_FLAG_HIDDEN);
+    
+    // 保存配置
+    SaveWallpaperConfig();
+    
+    ESP_LOGI(TAG, "Wallpaper cleared successfully");
+}
+
+// 新增：保存壁纸配置
+void ClockUI::SaveWallpaperConfig() {
+    FILE* file = fopen(WALLPAPER_CONFIG_FILE, "w");
+    if (!file) {
+        ESP_LOGE(TAG, "Failed to open wallpaper config file for writing");
+        return;
+    }
+    
+    fprintf(file, "type=%d\n", (int)wallpaper_type_);
+    fprintf(file, "color=0x%06" PRIx32 "\n", wallpaper_color_);
+    fprintf(file, "image_name=%s\n", wallpaper_image_name_.c_str());
+    fprintf(file, "network_url=%s\n", wallpaper_network_url_.c_str());
+    
+    fclose(file);
+    ESP_LOGI(TAG, "Wallpaper config saved");
+}
+
+// 新增：加载壁纸配置
+void ClockUI::LoadWallpaperConfig() {
+    FILE* file = fopen(WALLPAPER_CONFIG_FILE, "r");
+    if (!file) {
+        ESP_LOGI(TAG, "No wallpaper config file found, using defaults");
+        return;
+    }
+    
+    char line[256];
+    while (fgets(line, sizeof(line), file)) {
+        // 移除换行符
+        line[strcspn(line, "\n")] = 0;
+        
+        if (strncmp(line, "type=", 5) == 0) {
+            wallpaper_type_ = (WallpaperType)atoi(line + 5);
+        } else if (strncmp(line, "color=", 6) == 0) {
+            wallpaper_color_ = strtol(line + 6, nullptr, 16);
+        } else if (strncmp(line, "image_name=", 11) == 0) {
+            wallpaper_image_name_ = std::string(line + 11);
+        } else if (strncmp(line, "network_url=", 12) == 0) {
+            wallpaper_network_url_ = std::string(line + 12);
+        }
+    }
+    
+    fclose(file);
+    
+    // 根据配置应用壁纸
+    switch (wallpaper_type_) {
+        case WALLPAPER_SOLID_COLOR:
+            SetSolidColorWallpaper(wallpaper_color_);
+            break;
+        case WALLPAPER_SD_IMAGE:
+            if (!wallpaper_image_name_.empty()) {
+                SetImageWallpaper(wallpaper_image_name_.c_str());
+            }
+            break;
+        case WALLPAPER_NETWORK_IMAGE:
+            if (!wallpaper_network_url_.empty()) {
+                SetNetworkWallpaper(wallpaper_network_url_.c_str());
+            }
+            break;
+        default:
+            break;
+    }
+    
+    ESP_LOGI(TAG, "Wallpaper config loaded and applied");
+}
+
+// 新增：只保存纯色壁纸配置而不立即应用
+void ClockUI::SaveSolidColorWallpaperConfig(uint32_t color) {
+    ESP_LOGI(TAG, "Saving solid color wallpaper config without applying: 0x%06" PRIx32, color);
+    
+    wallpaper_type_ = WALLPAPER_SOLID_COLOR;
+    wallpaper_color_ = color;
+    wallpaper_image_name_ = "";
+    wallpaper_network_url_ = "";
+    
+    // 只保存配置，不应用
+    SaveWallpaperConfig();
+    
+    ESP_LOGI(TAG, "Solid color wallpaper config saved (not applied)");
+}
+
+// 新增：只保存图片壁纸配置而不立即应用
+void ClockUI::SaveImageWallpaperConfig(const char* image_name) {
+    if (!image_name) {
+        ESP_LOGE(TAG, "SaveImageWallpaperConfig: invalid image_name");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Saving image wallpaper config without applying: %s", image_name);
+    
+    wallpaper_type_ = WALLPAPER_SD_IMAGE;
+    wallpaper_image_name_ = image_name;
+    wallpaper_color_ = 0;
+    wallpaper_network_url_ = "";
+    
+    // 只保存配置，不应用
+    SaveWallpaperConfig();
+    
+    ESP_LOGI(TAG, "Image wallpaper config saved (not applied)");
+}
+
+// 新增：只保存网络壁纸配置而不立即应用
+void ClockUI::SaveNetworkWallpaperConfig(const char* url) {
+    if (!url) {
+        ESP_LOGE(TAG, "SaveNetworkWallpaperConfig: invalid url");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Saving network wallpaper config without applying: %s", url);
+    
+    wallpaper_type_ = WALLPAPER_NETWORK_IMAGE;
+    wallpaper_network_url_ = url;
+    wallpaper_color_ = 0;
+    wallpaper_image_name_ = "";
+    
+    // 只保存配置，不应用
+    SaveWallpaperConfig();
+    
+    ESP_LOGI(TAG, "Network wallpaper config saved (not applied)");
+}
+
+// 新增：只保存清除壁纸配置而不立即应用
+void ClockUI::SaveClearWallpaperConfig() {
+    ESP_LOGI(TAG, "Saving clear wallpaper config without applying");
+    
+    wallpaper_type_ = WALLPAPER_NONE;
+    wallpaper_color_ = 0;
+    wallpaper_image_name_ = "";
+    wallpaper_network_url_ = "";
+    
+    // 只保存配置，不应用
+    SaveWallpaperConfig();
+    
+    ESP_LOGI(TAG, "Clear wallpaper config saved (not applied)");
+}
+
+// 新增：从SD卡设置动画
+void ClockUI::SetAnimationFromSD(const char* anim_name) {
+    if (!animation_label_ || !anim_name) {
+        ESP_LOGE(TAG, "SetAnimationFromSD: invalid parameters");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Setting animation from SD: %s", anim_name);
+    
+    current_animation_ = std::string("/sdcard/") + anim_name;
+    animation_frame_ = 0;
+    
+    // 设置动画并显示
+    SetAnimation(current_animation_.c_str());
+    ShowAnimation(true);
+    
+    // 保存配置
+    SaveAnimationConfig();
+}
+
+// 新增：从网络设置动画  
+void ClockUI::SetAnimationFromNetwork(const char* url) {
+    if (!animation_label_ || !url) {
+        ESP_LOGE(TAG, "SetAnimationFromNetwork: invalid parameters");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Setting animation from network: %s", url);
+    
+    // 这里可以添加从网络下载动画的逻辑
+    // 暂时使用URL作为动画路径
+    current_animation_ = url;
+    animation_frame_ = 0;
+    
+    SetAnimation(current_animation_.c_str());
+    ShowAnimation(true);
+    
+    SaveAnimationConfig();
+}
+
+// 新增：清除动画
+void ClockUI::ClearAnimation() {
+    if (!animation_label_) {
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Clearing animation");
+    
+    current_animation_ = "";
+    animation_frame_ = 0;
+    ShowAnimation(false);
+    
+    SaveAnimationConfig();
+}
+
+// 新增：保存动画配置
+void ClockUI::SaveAnimationConfig() {
+    FILE* file = fopen(ANIMATION_CONFIG_FILE, "w");
+    if (!file) {
+        ESP_LOGE(TAG, "Failed to open animation config file for writing");
+        return;
+    }
+    
+    fprintf(file, "animation_path=%s\n", current_animation_.c_str());
+    fprintf(file, "animation_visible=%d\n", animation_visible_ ? 1 : 0);
+    
+    fclose(file);
+    ESP_LOGI(TAG, "Animation config saved");
+}
+
+// 新增：加载动画配置
+void ClockUI::LoadAnimationConfig() {
+    FILE* file = fopen(ANIMATION_CONFIG_FILE, "r");
+    if (!file) {
+        ESP_LOGI(TAG, "No animation config file found, using defaults");
+        return;
+    }
+    
+    char line[256];
+    bool should_show_animation = false;
+    
+    while (fgets(line, sizeof(line), file)) {
+        line[strcspn(line, "\n")] = 0;
+        
+        if (strncmp(line, "animation_path=", 15) == 0) {
+            current_animation_ = std::string(line + 15);
+        } else if (strncmp(line, "animation_visible=", 18) == 0) {
+            should_show_animation = (atoi(line + 18) == 1);
+        }
+    }
+    
+    fclose(file);
+    
+    // 应用动画配置
+    if (!current_animation_.empty()) {
+        SetAnimation(current_animation_.c_str());
+        ShowAnimation(should_show_animation);
+        ESP_LOGI(TAG, "Animation config loaded and applied: %s", current_animation_.c_str());
+    }
+}
+
+// 新增：只保存SD动画配置而不立即应用
+void ClockUI::SaveAnimationFromSDConfig(const char* anim_name) {
+    if (!anim_name) {
+        ESP_LOGE(TAG, "SaveAnimationFromSDConfig: invalid anim_name");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Saving SD animation config without applying: %s", anim_name);
+    
+    current_animation_ = std::string("/sdcard/") + anim_name;
+    animation_frame_ = 0;
+    
+    // 只保存配置，不应用
+    SaveAnimationConfig();
+    
+    ESP_LOGI(TAG, "SD animation config saved (not applied)");
+}
+
+// 新增：只保存网络动画配置而不立即应用
+void ClockUI::SaveAnimationFromNetworkConfig(const char* url) {
+    if (!url) {
+        ESP_LOGE(TAG, "SaveAnimationFromNetworkConfig: invalid url");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Saving network animation config without applying: %s", url);
+    
+    current_animation_ = url;
+    animation_frame_ = 0;
+    
+    // 只保存配置，不应用
+    SaveAnimationConfig();
+    
+    ESP_LOGI(TAG, "Network animation config saved (not applied)");
+}
+
+// 新增：从SD卡解码JPG图片（完整实现）
+bool ClockUI::DecodeJpgFromSD(const char* filename, uint8_t** rgb565_data, int* width, int* height) {
+    ESP_LOGI(TAG, "Decoding JPG from SD: %s", filename);
+    
+    FILE* file = fopen(filename, "rb");
+    if (!file) {
+        ESP_LOGE(TAG, "Failed to open JPG file: %s", filename);
+        return false;
+    }
+    
+    // 获取文件大小
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    
+    if (file_size <= 0) {
+        ESP_LOGE(TAG, "Invalid JPG file size: %ld", file_size);
+        fclose(file);
+        return false;
+    }
+    
+    // 读取文件数据
+    uint8_t* jpg_data = (uint8_t*)heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!jpg_data) {
+        ESP_LOGE(TAG, "Failed to allocate memory for JPG data");
+        fclose(file);
+        return false;
+    }
+    
+    size_t read_size = fread(jpg_data, 1, file_size, file);
+    fclose(file);
+    
+    if (read_size != file_size) {
+        ESP_LOGE(TAG, "Failed to read complete JPG file");
+        heap_caps_free(jpg_data);
+        return false;
+    }
+    
+    // 检查JPG头部
+    if (jpg_data[0] != 0xFF || jpg_data[1] != 0xD8) {
+        ESP_LOGE(TAG, "Invalid JPG header: expected FF D8, got %02X %02X", jpg_data[0], jpg_data[1]);
+        heap_caps_free(jpg_data);
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "Valid JPG header detected");
+    
+    // 分配TJPGD工作缓冲区
+    const size_t work_size = 3100;
+    uint8_t* work_buffer = (uint8_t*)heap_caps_malloc(work_size, MALLOC_CAP_INTERNAL);
+    if (!work_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate TJPGD work buffer");
+        heap_caps_free(jpg_data);
+        return false;
+    }
+    
+    // 设置解码上下文
+    ClockJpegDecodeContext decode_ctx;
+    decode_ctx.src_data = jpg_data;
+    decode_ctx.src_size = file_size;
+    decode_ctx.src_pos = 0;
+    decode_ctx.output_buffer = nullptr;
+    decode_ctx.output_size = 0;
+    decode_ctx.output_pos = 0;
+    
+    // 初始化TJPGD
+    JDEC jdec;
+    JRESULT res = jd_prepare(&jdec, clock_tjpgd_input_callback, work_buffer, work_size, &decode_ctx);
+    
+    if (res != JDR_OK) {
+        ESP_LOGE(TAG, "TJPGD prepare failed: %d", res);
+        heap_caps_free(work_buffer);
+        heap_caps_free(jpg_data);
+        return false;
+    }
+    
+    *width = jdec.width;
+    *height = jdec.height;
+    ESP_LOGI(TAG, "JPG dimensions: %dx%d", *width, *height);
+    
+    // 检查图片尺寸是否合理
+    if (*width == 0 || *height == 0 || *width > 1024 || *height > 1024) {
+        ESP_LOGE(TAG, "Invalid JPG dimensions: %dx%d", *width, *height);
+        heap_caps_free(work_buffer);
+        heap_caps_free(jpg_data);
+        return false;
+    }
+    
+    // 分配RGB输出缓冲区
+    size_t rgb_size = (*width) * (*height) * 3;
+    uint8_t* rgb_buffer = (uint8_t*)heap_caps_malloc(rgb_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!rgb_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate RGB buffer: %zu bytes", rgb_size);
+        heap_caps_free(work_buffer);
+        heap_caps_free(jpg_data);
+        return false;
+    }
+    
+    // 设置输出缓冲区
+    decode_ctx.output_buffer = rgb_buffer;
+    decode_ctx.output_size = rgb_size;
+    
+    // 执行JPG解码
+    res = jd_decomp(&jdec, clock_tjpgd_output_callback, 0);
+    
+    // 清理资源
+    heap_caps_free(work_buffer);
+    heap_caps_free(jpg_data);
+    
+    if (res != JDR_OK) {
+        ESP_LOGE(TAG, "TJPGD decompress failed: %d", res);
+        heap_caps_free(rgb_buffer);
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "JPG decoded successfully");
+    
+    // 转换RGB888到RGB565
+    size_t rgb565_size = (*width) * (*height) * 2;
+    *rgb565_data = (uint8_t*)heap_caps_malloc(rgb565_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!*rgb565_data) {
+        ESP_LOGE(TAG, "Failed to allocate RGB565 buffer: %zu bytes", rgb565_size);
+        heap_caps_free(rgb_buffer);
+        return false;
+    }
+    
+    uint16_t* rgb565_ptr = (uint16_t*)*rgb565_data;
+    for (size_t i = 0; i < (*width) * (*height); i++) {
+        uint8_t r = rgb_buffer[i * 3 + 0];
+        uint8_t g = rgb_buffer[i * 3 + 1]; 
+        uint8_t b = rgb_buffer[i * 3 + 2];
+        rgb565_ptr[i] = RGB888ToRGB565(r, g, b);
+    }
+    
+    heap_caps_free(rgb_buffer);
+    ESP_LOGI(TAG, "RGB888 to RGB565 conversion completed");
+    return true;
+}
+
+// 新增：下载并解码JPG（改进实现）
+bool ClockUI::DownloadAndDecodeJpg(const char* url, const char* local_filename) {
+    ESP_LOGI(TAG, "Downloading and decoding JPG: %s -> %s", url, local_filename);
+    
+    // 创建HTTP客户端配置
+    esp_http_client_config_t config = {};
+    config.url = url;
+    config.timeout_ms = 30000;
+    config.buffer_size = 4096;
+    config.buffer_size_tx = 1024;
+    config.user_agent = "ESP32-ClockUI/1.0";
+    config.method = HTTP_METHOD_GET;
+    config.skip_cert_common_name_check = true;
+    config.disable_auto_redirect = false;
+    config.max_redirection_count = 3;
+    
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == nullptr) {
+        ESP_LOGE(TAG, "Failed to initialize HTTP client");
+        return false;
+    }
+    
+    esp_http_client_set_header(client, "Accept", "image/jpeg, image/jpg, image/*");
+    esp_http_client_set_header(client, "Connection", "close");
+    esp_http_client_set_header(client, "Cache-Control", "no-cache");
+    
+    // 开始下载
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        return false;
+    }
+    
+    int content_length = esp_http_client_fetch_headers(client);
+    int status_code = esp_http_client_get_status_code(client);
+    
+    ESP_LOGI(TAG, "HTTP Status: %d, Content-Length: %d", status_code, content_length);
+    
+    if (status_code != 200) {
+        ESP_LOGE(TAG, "HTTP request failed with status: %d", status_code);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+    
+    // 分配下载缓冲区
+    size_t download_size = (content_length > 0) ? content_length : 512 * 1024; // 默认512KB
+    uint8_t* download_buffer = (uint8_t*)heap_caps_malloc(download_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!download_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate download buffer: %zu bytes", download_size);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+    
+    // 读取数据
+    size_t total_read = 0;
+    while (total_read < download_size) {
+        int data_read = esp_http_client_read(client, (char*)(download_buffer + total_read), 
+                                             download_size - total_read);
+        if (data_read < 0) {
+            ESP_LOGE(TAG, "Error reading HTTP data");
+            break;
+        } else if (data_read == 0) {
+            ESP_LOGI(TAG, "Download completed");
+            break;
+        }
+        total_read += data_read;
+    }
+    
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    
+    if (total_read == 0) {
+        ESP_LOGE(TAG, "No data downloaded");
+        heap_caps_free(download_buffer);
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "Downloaded %zu bytes", total_read);
+    
+    // 保存到SD卡
+    char local_path[64];
+    snprintf(local_path, sizeof(local_path), "/sdcard/%s.JPG", local_filename);
+    
+    FILE* file = fopen(local_path, "wb");
+    if (file) {
+        size_t written = fwrite(download_buffer, 1, total_read, file);
+        fclose(file);
+        
+        if (written == total_read) {
+            ESP_LOGI(TAG, "File saved to SD card: %s", local_path);
+            heap_caps_free(download_buffer);
+            return true;
+        } else {
+            ESP_LOGE(TAG, "Failed to write complete file to SD card");
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to create file on SD card: %s", local_path);
+    }
+    
+    heap_caps_free(download_buffer);
+    return false;
+}
+

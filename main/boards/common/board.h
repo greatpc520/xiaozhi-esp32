@@ -61,6 +61,9 @@ public:
     virtual void HideClock() { /* 默认空实现 */ }
     virtual bool IsClockVisible() const { return false; }
     
+    // 时钟UI实例访问接口
+    virtual class ClockUI* GetClockUI() { return nullptr; }
+    
     // RTC时钟相关接口
     virtual bool InitializeRtcClock() { return false; }
     virtual void SyncTimeOnBoot() { /* 默认空实现 */ }

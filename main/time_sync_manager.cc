@@ -30,8 +30,8 @@ bool TimeSyncManager::Initialize(i2c_master_bus_handle_t i2c_bus) {
     }
     
     // 设置时区为北京时间 UTC+8 (仅在此处设置一次)
-    // setenv("TZ", "CST-8", 1);
-    // tzset();
+    setenv("TZ", "CST-8", 1);
+    tzset();
     ESP_LOGI(TAG, "Timezone set to Beijing (UTC+8) in TimeSyncManager");
     
     // 初始化PCF8563 RTC
