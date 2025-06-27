@@ -64,6 +64,12 @@ bool AlarmManager::Initialize() {
     // 从NVS加载闹钟数据
     LoadAlarmsFromNVS();
     
+    // 清理过期的一次性闹钟（设备启动时执行一次）
+    int removed_count = RemoveExpiredAlarms();
+    if (removed_count > 0) {
+        ESP_LOGI(TAG, "Initialize: Removed %d expired alarms on startup", removed_count);
+    }
+    
     // 启动定时器
     if (xTimerStart(check_timer_, 0) != pdPASS) {
         ESP_LOGE(TAG, "Failed to start check timer");
@@ -252,20 +258,42 @@ AlarmInfo AlarmManager::GetNextAlarm() {
                 // 计算到目标星期几的天数差
                 int days_diff = (weekday - current_tm.tm_wday + 7) % 7;
                 
-                // 如果是今天但时间已过，设置为下周同一天
+                // 如果是今天，检查时间是否已过
                 if (days_diff == 0) {
                     time_t today_alarm_time = mktime(&alarm_tm);
                     if (today_alarm_time <= current_time) {
-                        days_diff = 7; // 下周同一天
+                        // 今天的时间已过，设置为下周同一天
+                        days_diff = 7;
                     }
+                    // 如果今天的时间还没到，days_diff保持为0（今天）
+                } else if (days_diff > 0) {
+                    // 本周内的其他日期，直接使用计算出的天数差
+                    // days_diff已经正确，不需要修改
                 }
                 
+                // 设置正确的日期
                 alarm_tm.tm_mday += days_diff;
+                
+                // 规范化时间结构（处理月份、年份跨越）
                 time_t trigger_time = mktime(&alarm_tm);
+                
+                if (trigger_time == -1) {
+                    ESP_LOGW(TAG, "GetNextAlarm: mktime failed for alarm ID=%d, weekday=%d, days_diff=%d", 
+                             alarm.id, weekday, days_diff);
+                    continue;
+                }
+                
+                // 记录详细的计算过程，便于调试
+                struct tm debug_tm;
+                localtime_r(&trigger_time, &debug_tm);
+                ESP_LOGI(TAG, "GetNextAlarm: Alarm ID=%d, weekday=%d, days_diff=%d, trigger_time=%02d:%02d on %04d-%02d-%02d (wday=%d)", 
+                         alarm.id, weekday, days_diff, debug_tm.tm_hour, debug_tm.tm_min,
+                         debug_tm.tm_year + 1900, debug_tm.tm_mon + 1, debug_tm.tm_mday, debug_tm.tm_wday);
                 
                 // 找到最近的触发时间
                 if (next_trigger_time == 0 || trigger_time < next_trigger_time) {
                     next_trigger_time = trigger_time;
+                    ESP_LOGI(TAG, "GetNextAlarm: Updated next_trigger_time for alarm ID=%d", alarm.id);
                 }
             }
         }

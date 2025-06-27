@@ -202,7 +202,7 @@ void ClockUI::CreateClockUI() {
         lv_obj_set_style_text_color(time_lbl, lv_color_white(), 0);
         lv_obj_set_style_text_font(time_lbl, &font_puhui_40_4, 0);
         lv_obj_set_style_text_align(time_lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_pos(time_lbl, 0, LV_VER_RES / 2 - 40 -30);
+        lv_obj_set_pos(time_lbl, 0, LV_VER_RES / 2 - 50);  // 调整时间位置，稍微上移
         lv_obj_set_size(time_lbl, LV_HOR_RES, LV_SIZE_CONTENT);
         lv_label_set_text(time_lbl, "");
 
@@ -212,9 +212,9 @@ void ClockUI::CreateClockUI() {
         lv_obj_set_style_text_color(time_am_pm, lv_color_white(), 0);
         lv_obj_set_style_text_font(time_am_pm, &font_puhui_20_4, 0);
         lv_obj_set_style_text_align(time_am_pm, LV_TEXT_ALIGN_LEFT, 0);
-        lv_obj_set_pos(time_am_pm,  LV_HOR_RES/2 + 58, LV_VER_RES / 2 - 10-30);
+        lv_obj_set_pos(time_am_pm,  LV_HOR_RES/2 + 58, LV_VER_RES / 2 - 20);  // 调整AM/PM位置
         lv_obj_set_size(time_am_pm, LV_HOR_RES, LV_SIZE_CONTENT);
-        lv_label_set_text(time_am_pm, "上午");
+        lv_label_set_text(time_am_pm, "");
     }
     }
     
@@ -223,15 +223,15 @@ void ClockUI::CreateClockUI() {
     if (anim_lbl) {
         animation_label_ = anim_lbl;
         lv_obj_set_size(anim_lbl, 64, 64);
-        // 居中显示，位置在时间标签下方
-        lv_obj_set_pos(anim_lbl, (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 + 30);
+        // 居中显示，位置在时间标签下方，与表情位置一致
+        lv_obj_set_pos(anim_lbl, (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 );  // 改为100，与表情位置保持一致
         lv_obj_set_style_bg_opa(anim_lbl, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(anim_lbl, 0, 0);
         lv_obj_set_style_pad_all(anim_lbl, 0, 0);
         lv_obj_set_style_radius(anim_lbl, 8, 0); // 轻微的圆角
         lv_obj_add_flag(anim_lbl, LV_OBJ_FLAG_HIDDEN); // 默认隐藏
-        ESP_LOGI(TAG, "64x64 animation label created at center position");
-    }
+        ESP_LOGI(TAG, "64x64 animation label created at position (x=%ld, y=%ld)", (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 + 20);
+    } 
     
     // 创建日期标签（简化版本）
     lv_obj_t* date_lbl = lv_label_create(container);
@@ -240,18 +240,17 @@ void ClockUI::CreateClockUI() {
         lv_obj_set_style_text_color(date_lbl, lv_color_white(), 0);
         lv_obj_set_style_text_font(date_lbl, &font_puhui_20_4, 0);
         lv_obj_set_style_text_align(date_lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_pos(date_lbl, 0, 5);
+        lv_obj_set_pos(date_lbl, 0, 15);  // 日期位置稍微下调
         lv_obj_set_size(date_lbl, LV_HOR_RES, LV_SIZE_CONTENT);
         lv_label_set_text(date_lbl, "");
     }
     
-    // 创建闹钟标签（显示下一个闹钟）- 现在改为创建容器
     // 创建闹钟容器（包含图标和文字）
     lv_obj_t* alarm_container = lv_obj_create(container);
     if (alarm_container) {
         alarm_icon_label_ = alarm_container; // 重用变量作为容器指针
         lv_obj_set_size(alarm_container, LV_HOR_RES, LV_SIZE_CONTENT);
-        lv_obj_set_pos(alarm_container, 0, LV_VER_RES - 60);
+        lv_obj_set_pos(alarm_container, 0, LV_VER_RES - 50);  // 调整闹钟容器位置，上移10像素
         lv_obj_set_style_bg_opa(alarm_container, LV_OPA_TRANSP, 0); // 透明背景
         lv_obj_set_style_border_width(alarm_container, 0, 0);
         lv_obj_set_style_pad_all(alarm_container, 0, 0);
@@ -292,7 +291,7 @@ void ClockUI::CreateClockUI() {
         lv_obj_set_style_pad_all(notification_container, 8, 0); // 添加内边距
         lv_obj_set_style_radius(notification_container, 8, 0); // 圆角
         lv_obj_set_style_border_width(notification_container, 0, 0);
-        lv_obj_set_pos(notification_container, 10, LV_VER_RES-60);
+        lv_obj_set_pos(notification_container, 10, LV_VER_RES - 45);  // 通知容器位置稍微上调
         lv_obj_set_size(notification_container, LV_HOR_RES - 20, LV_SIZE_CONTENT);
         lv_obj_clear_flag(notification_container, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_flex_flow(notification_container, LV_FLEX_FLOW_ROW);
@@ -896,18 +895,18 @@ void ClockUI::SetAlarmEmotion(const std::string& emotion) {
             
             lv_obj_set_style_text_align(emotion_text_label, LV_TEXT_ALIGN_CENTER, 0);
             
-            // 设置位置和大小与动画标签相同
+            // 设置位置和大小，确保表情在时间下方不重叠的位置
             lv_obj_set_size(emotion_text_label, 64, 64);
-            lv_obj_set_pos(emotion_text_label, (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 + 30);
+            lv_obj_set_pos(emotion_text_label, (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 );  // 改为100，进一步下移避免重叠
             
             // 设置表情文字
             lv_label_set_text(emotion_text_label, emotion_char.c_str());
             
-            // 居中对齐
+            // 设置文本对齐方式，但不调用lv_obj_center()避免位置冲突
             lv_obj_set_style_text_align(emotion_text_label, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_center(emotion_text_label);
             
-            ESP_LOGI(TAG, "Alarm emotion displayed: %s (character: %s)", emotion.c_str(), emotion_char.c_str());
+            ESP_LOGI(TAG, "Alarm emotion displayed: %s (character: %s) at position (x=%ld, y=%ld)", 
+                     emotion.c_str(), emotion_char.c_str(), (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 + 100);
         } else {
             ESP_LOGE(TAG, "Failed to create emotion text label");
         }
@@ -1323,22 +1322,34 @@ void ClockUI::SetNetworkWallpaper(const char* url) {
     
     ESP_LOGI(TAG, "Setting network wallpaper: %s", url);
     
-    // 生成本地文件名（取URL最后8个字符作为文件名）
+    // 生成本地文件名（从URL中提取文件名，去掉扩展名）
     std::string url_str(url);
+    std::string filename = "HAPPY";  // 默认文件名
+    
     size_t pos = url_str.find_last_of('/');
-    std::string filename = "NETWK";
     if (pos != std::string::npos && pos + 1 < url_str.length()) {
-        std::string name = url_str.substr(pos + 1);
-        if (name.length() > 8) {
-            name = name.substr(0, 8);
+        std::string full_name = url_str.substr(pos + 1);
+        
+        // 去掉文件扩展名（.jpg或.jpeg）
+        size_t dot_pos = full_name.find_last_of('.');
+        if (dot_pos != std::string::npos) {
+            filename = full_name.substr(0, dot_pos);
+        } else {
+            filename = full_name;
         }
-        filename = name;
+        
+        // 限制文件名长度为8个字符
+        if (filename.length() > 8) {
+            filename = filename.substr(0, 8);
+        }
     }
     
     // 转换为大写
     std::transform(filename.begin(), filename.end(), filename.begin(), ::toupper);
     
-    // 先尝试从SD卡加载
+    ESP_LOGI(TAG, "Generated local filename: %s", filename.c_str());
+    
+    // 先尝试从SD卡加载（不带扩展名，因为SetImageWallpaper会添加）
     char local_path[64];
     snprintf(local_path, sizeof(local_path), "/sdcard/%s.JPG", filename.c_str());
     

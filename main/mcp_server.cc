@@ -246,8 +246,7 @@ void McpServer::AddCommonTools() {
             return "{\"success\": true, \"message\": \"测试已启动：时钟界面已显示，NTP同步已触发，将在同步完成后自动更新时间显示\"}";
         });
 
-    AddTool("test.show_alarm_emotion",
-        "测试闹钟表情显示功能",
+    AddTool("test.show_alarm_emotion", "测试闹钟表情显示功能", 
         PropertyList({
             Property("emotion_type", kPropertyTypeString)
         }),
@@ -266,15 +265,134 @@ void McpServer::AddCommonTools() {
                 std::string emotion_type = properties["emotion_type"].value<std::string>();
                 
                 if (emotion_type.empty()) {
-                    return "{\"success\": false, \"message\": \"emotion_type cannot be empty\"}";
+                    return "{\"success\": false, \"message\": \"emotion_type parameter is required\"}";
                 }
                 
-                // 设置闹钟表情
                 clock_ui->SetAlarmEmotion(emotion_type);
                 
-                return "{\"success\": true, \"message\": \"Alarm emotion set successfully\", \"emotion_type\": \"" + emotion_type + "\"}";
+                return "{\"success\": true, \"message\": \"Alarm emotion displayed successfully\", \"emotion_type\": \"" + emotion_type + "\"}";
             } catch (const std::exception& e) {
-                return "{\"success\": false, \"message\": \"Failed to get emotion_type parameter\"}";
+                return "{\"success\": false, \"message\": \"Exception: " + std::string(e.what()) + "\"}";
+            }
+        });
+
+    AddTool("test.cleanup_expired_alarms", "测试清理过期闹钟功能", 
+        PropertyList(),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto& alarm_manager = AlarmManager::GetInstance();
+            
+            try {
+                // 获取清理前的闹钟数量
+                auto all_alarms_before = alarm_manager.GetAllAlarms();
+                int total_before = all_alarms_before.size();
+                
+                // 执行过期闹钟清理
+                int removed_count = alarm_manager.RemoveExpiredAlarms();
+                
+                // 获取清理后的闹钟数量
+                auto all_alarms_after = alarm_manager.GetAllAlarms();
+                int total_after = all_alarms_after.size();
+                
+                std::string message = "Expired alarms cleanup completed. ";
+                message += "Before: " + std::to_string(total_before) + " alarms, ";
+                message += "After: " + std::to_string(total_after) + " alarms, ";
+                message += "Removed: " + std::to_string(removed_count) + " expired alarms";
+                
+                // 如果时钟界面可见，刷新闹钟显示
+                if (board.IsClockVisible()) {
+                    auto clock_ui = board.GetClockUI();
+                    if (clock_ui) {
+                        Application::GetInstance().Schedule([clock_ui]() {
+                            clock_ui->RefreshNextAlarmDisplay();
+                        });
+                        message += ". Clock display refreshed.";
+                    }
+                }
+                
+                return "{\"success\": true, \"message\": \"" + message + "\", \"removed_count\": " + std::to_string(removed_count) + ", \"total_before\": " + std::to_string(total_before) + ", \"total_after\": " + std::to_string(total_after) + "}";
+                
+            } catch (const std::exception& e) {
+                return "{\"success\": false, \"message\": \"Exception during cleanup: " + std::string(e.what()) + "\"}";
+            }
+        });
+
+    AddTool("test.network_wallpaper", "测试网络壁纸下载和显示", 
+        PropertyList({
+            Property("test_url", kPropertyTypeString, "http://www.replime.cn/ejpg/happy.jpg")
+        }),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            if (!board.IsClockVisible()) {
+                return "{\"success\": false, \"message\": \"Clock UI not visible. Please show clock first.\"}";
+            }
+            
+            auto clock_ui = board.GetClockUI();
+            if (!clock_ui) {
+                return "{\"success\": false, \"message\": \"Clock UI not available\"}";
+            }
+            
+            std::string test_url = properties["test_url"].value<std::string>();
+            
+            try {
+                ESP_LOGI("MCP", "Testing network wallpaper with URL: %s", test_url.c_str());
+                clock_ui->SetNetworkWallpaper(test_url.c_str());
+                return "{\"success\": true, \"message\": \"Network wallpaper test started\", \"url\": \"" + test_url + "\"}";
+            } catch (const std::exception& e) {
+                return "{\"success\": false, \"message\": \"Failed to test network wallpaper: " + std::string(e.what()) + "\"}";
+            }
+        });
+
+    AddTool("test.debug_next_alarm", "调试下一次闹钟显示功能，显示所有闹钟信息和当前时间", 
+        PropertyList(),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            try {
+                auto& alarm_manager = AlarmManager::GetInstance();
+                
+                // 获取所有闹钟信息
+                std::string debug_info = "{\"alarms\": [";
+                auto alarms = alarm_manager.GetAllAlarms();
+                
+                for (size_t i = 0; i < alarms.size(); i++) {
+                    const auto& alarm = alarms[i];
+                    if (i > 0) debug_info += ", ";
+                    
+                    debug_info += "{\"id\": " + std::to_string(alarm.id) + 
+                                 ", \"time\": \"" + std::to_string(alarm.hour) + ":" + 
+                                 (alarm.minute < 10 ? "0" : "") + std::to_string(alarm.minute) + 
+                                 "\", \"enabled\": " + (alarm.enabled ? "true" : "false") +
+                                 ", \"description\": \"" + alarm.description + 
+                                 "\", \"weekdays\": [";
+                    
+                    for (size_t j = 0; j < alarm.weekdays.size(); j++) {
+                        if (j > 0) debug_info += ", ";
+                        debug_info += std::to_string(alarm.weekdays[j]);
+                    }
+                    debug_info += "]}";
+                }
+                debug_info += "], ";
+                
+                // 获取下一个闹钟
+                AlarmInfo next_alarm = alarm_manager.GetNextAlarm();
+                debug_info += "\"next_alarm\": {\"id\": " + std::to_string(next_alarm.id) + 
+                             ", \"time\": \"" + std::to_string(next_alarm.hour) + ":" + 
+                             (next_alarm.minute < 10 ? "0" : "") + std::to_string(next_alarm.minute) + 
+                             "\", \"description\": \"" + next_alarm.description + "\"}";
+                
+                // 获取当前时间
+                struct tm current_tm;
+                auto& time_sync_manager = TimeSyncManager::GetInstance();
+                if (time_sync_manager.GetUnifiedTime(&current_tm)) {
+                    debug_info += ", \"current_time\": \"" + std::to_string(current_tm.tm_hour) + ":" + 
+                                 (current_tm.tm_min < 10 ? "0" : "") + std::to_string(current_tm.tm_min) + 
+                                 "\", \"current_weekday\": " + std::to_string(current_tm.tm_wday);
+                } else {
+                    debug_info += ", \"current_time\": \"ERROR\", \"current_weekday\": -1";
+                }
+                
+                debug_info += ", \"success\": true}";
+                return debug_info;
+                
+            } catch (const std::exception& e) {
+                return "{\"success\": false, \"message\": \"Exception: " + std::string(e.what()) + "\"}";
             }
         });
 
@@ -549,9 +667,12 @@ void McpServer::AddCommonTools() {
             Property("color", kPropertyTypeString)
         }),
         [&board](const PropertyList& properties) -> ReturnValue {
-            auto display = board.GetDisplay();
-            if (!display) {
-                return "{\"success\": false, \"message\": \"Display not available\"}";
+            // 检查是否有时钟界面
+            if (!board.IsClockVisible()) {
+                ESP_LOGI(TAG, "Clock not visible, showing clock first for wallpaper setting");
+                board.ShowClock();
+                // 等待时钟界面创建完成
+                vTaskDelay(pdMS_TO_TICKS(500));
             }
             
             // 获取时钟UI实例
@@ -587,16 +708,17 @@ void McpServer::AddCommonTools() {
                 }
             }
             
-            // 检查时钟UI是否可见，如果不可见就先保存配置
-            if (!board.IsClockVisible()) {
-                // 时钟UI不可见，只保存配置，下次显示时生效
-                clock_ui->SaveSolidColorWallpaperConfig(color);
-                return "{\"success\": true, \"message\": \"Wallpaper config saved. Will be applied when clock is shown.\", \"color\": \"" + color_str + "\"}";
-            } else {
-                // 时钟UI可见，直接应用壁纸
-                clock_ui->SetSolidColorWallpaper(color);
-                return "{\"success\": true, \"message\": \"Solid color wallpaper set and applied\", \"color\": \"" + color_str + "\"}";
-            }
+            // 直接应用壁纸（因为时钟界面已经可见）
+            clock_ui->SetSolidColorWallpaper(color);
+            
+            // 延迟显示壁纸效果
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            
+            // 关闭时钟显示
+            ESP_LOGI(TAG, "Wallpaper setting completed, hiding clock");
+            board.HideClock();
+            
+            return "{\"success\": true, \"message\": \"Solid color wallpaper set successfully\", \"color\": \"" + color_str + "\"}";
         });
 
     AddTool("clock.set_image_wallpaper", "设置时钟图片壁纸（从SD卡）,支持的图片名称：- 图片名称: `BJ`, `BJ2`, `BJ3`, `BJ4`, `BJ5`, `BJ6`, `BJ7`, `BJ8`, `BJ9`, `BJ10`\n", 
@@ -604,6 +726,14 @@ void McpServer::AddCommonTools() {
             Property("image_name", kPropertyTypeString)
         }),
         [&board](const PropertyList& properties) -> ReturnValue {
+            // 检查是否有时钟界面
+            if (!board.IsClockVisible()) {
+                ESP_LOGI(TAG, "Clock not visible, showing clock first for image wallpaper setting");
+                board.ShowClock();
+                // 等待时钟界面创建完成
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
+            
             auto clock_ui = board.GetClockUI();
             if (!clock_ui) {
                 return "{\"success\": false, \"message\": \"Clock UI not available\"}";
@@ -619,22 +749,36 @@ void McpServer::AddCommonTools() {
             // 转换为大写
             std::transform(image_name.begin(), image_name.end(), image_name.begin(), ::toupper);
             
-            // 检查时钟UI是否可见
-            if (!board.IsClockVisible()) {
-                clock_ui->SaveImageWallpaperConfig(image_name.c_str());
-                return "{\"success\": true, \"message\": \"Image wallpaper config saved. Will be applied when clock is shown.\", \"image_name\": \"" + image_name + "\"}";
-            } else {
-                clock_ui->SetImageWallpaper(image_name.c_str());
-                return "{\"success\": true, \"message\": \"Image wallpaper set and applied\", \"image_name\": \"" + image_name + "\"}";
-            }
+            // 直接应用壁纸（因为时钟界面已经可见）
+            clock_ui->SetImageWallpaper(image_name.c_str());
+            
+            // 延迟显示壁纸效果
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            
+            // 关闭时钟显示
+            ESP_LOGI(TAG, "Image wallpaper setting completed, hiding clock");
+            board.HideClock();
+            
+            return "{\"success\": true, \"message\": \"Image wallpaper set successfully\", \"image_name\": \"" + image_name + "\"}";
         });
 
-    AddTool("clock.set_network_wallpaper", "设置时钟网络壁纸,url格式：\n"
-            "- 网络图片URL: `http://www.replime.cn/ejpg/图片名称.jpg`，图片默认名称或没有指定时：`happy` ，图片名称支持：`happy`  `laughing`  `funny`  `sad`  `angry`  `crying`  `loving`  `embarrassed`  `surprised`  `shocked`  `thinking`  `winking`  `cool`  `relaxed`  `delicious`  `kissy`  `confident`  `sleepy`  `silly`  `confused`\n", 
+    AddTool("clock.set_network_wallpaper", "设置时钟网络壁纸\n"
+            "- 默认URL（未指定时）: `http://www.replime.cn/ejpg/happy.jpg` (保存为本地文件名 HAPPY.JPG)\n"
+            "- URL格式: `http://www.replime.cn/ejpg/图片名称.jpg`\n"
+            "- 支持的图片名称: `happy`, `laughing`, `funny`, `sad`, `angry`, `crying`, `loving`, `embarrassed`, `surprised`, `shocked`, `thinking`, `winking`, `cool`, `relaxed`, `delicious`, `kissy`, `confident`, `sleepy`, `silly`, `confused`\n"
+            "- 本地文件名规则: 从URL提取文件名（去掉.jpg扩展名），自动转换为大写，最多8个字符\n", 
         PropertyList({
-            Property("url", kPropertyTypeString)
+            Property("url", kPropertyTypeString, "http://www.replime.cn/ejpg/happy.jpg")  // 设置默认值
         }),
         [&board](const PropertyList& properties) -> ReturnValue {
+            // 检查是否有时钟界面
+            if (!board.IsClockVisible()) {
+                ESP_LOGI(TAG, "Clock not visible, showing clock first for network wallpaper setting");
+                board.ShowClock();
+                // 等待时钟界面创建完成
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
+            
             auto clock_ui = board.GetClockUI();
             if (!clock_ui) {
                 return "{\"success\": false, \"message\": \"Clock UI not available\"}";
@@ -642,32 +786,46 @@ void McpServer::AddCommonTools() {
             
             std::string url = properties["url"].value<std::string>();
             
-            // 检查时钟UI是否可见
-            if (!board.IsClockVisible()) {
-                clock_ui->SaveNetworkWallpaperConfig(url.c_str());
-                return "{\"success\": true, \"message\": \"Network wallpaper config saved. Download will start when clock is shown.\", \"url\": \"" + url + "\"}";
-            } else {
-                clock_ui->SetNetworkWallpaper(url.c_str());
-                return "{\"success\": true, \"message\": \"Network wallpaper download started\", \"url\": \"" + url + "\"}";
-            }
+            // 直接应用壁纸（因为时钟界面已经可见）
+            clock_ui->SetNetworkWallpaper(url.c_str());
+            
+            // 延迟显示壁纸效果（网络下载可能需要更长时间）
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            
+            // 关闭时钟显示
+            ESP_LOGI(TAG, "Network wallpaper setting completed, hiding clock");
+            board.HideClock();
+            
+            return "{\"success\": true, \"message\": \"Network wallpaper download and set successfully\", \"url\": \"" + url + "\"}";
         });
 
     AddTool("clock.clear_wallpaper", "清除时钟壁纸", 
         PropertyList(),
         [&board](const PropertyList& properties) -> ReturnValue {
+            // 检查是否有时钟界面
+            if (!board.IsClockVisible()) {
+                ESP_LOGI(TAG, "Clock not visible, showing clock first for clearing wallpaper");
+                board.ShowClock();
+                // 等待时钟界面创建完成
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
+            
             auto clock_ui = board.GetClockUI();
             if (!clock_ui) {
                 return "{\"success\": false, \"message\": \"Clock UI not available\"}";
             }
             
-            // 检查时钟UI是否可见
-            if (!board.IsClockVisible()) {
-                clock_ui->SaveClearWallpaperConfig();
-                return "{\"success\": true, \"message\": \"Wallpaper config cleared. Will take effect when clock is shown.\"}";
-            } else {
-                clock_ui->ClearWallpaper();
-                return "{\"success\": true, \"message\": \"Wallpaper cleared\"}";
-            }
+            // 直接清除壁纸（因为时钟界面已经可见）
+            clock_ui->ClearWallpaper();
+            
+            // 延迟显示清除效果
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            
+            // 关闭时钟显示
+            ESP_LOGI(TAG, "Wallpaper clearing completed, hiding clock");
+            board.HideClock();
+            
+            return "{\"success\": true, \"message\": \"Wallpaper cleared successfully\"}";
         });
 
     AddTool("clock.set_animation", "设置时钟动画（从SD卡）", 

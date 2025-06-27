@@ -825,7 +825,13 @@ public:
             return;
         }
         
-        // 第二步：获取下一个闹钟信息（过期闹钟已在ProcessTriggeredAlarms中清理）
+        // 第二步：清理过期的一次性闹钟，确保显示正确的下一个闹钟
+        int removed_count = alarm_manager.RemoveExpiredAlarms();
+        if (removed_count > 0) {
+            ESP_LOGI(TAG, "ShowClock: Removed %d expired alarms", removed_count);
+        }
+        
+        // 第三步：获取下一个闹钟信息（现在已经清理了过期闹钟）
         AlarmInfo next_alarm = alarm_manager.GetNextAlarm();
         
         ESP_LOGI(TAG, "ShowClock: GetNextAlarm returned ID=%d, Time=%02d:%02d, Description='%s'", 
