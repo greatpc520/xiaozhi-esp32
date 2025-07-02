@@ -122,9 +122,9 @@ void TimeSyncManager::SyncTimeOnBoot() {
             ESP_LOGI(TAG, "Time difference (RTC - System): %lld seconds", time_diff);
             
             // 只有当RTC时间是合理的（2024年以后）才考虑同步
-            if (rtc_year >= 2024) {
+            if (rtc_year >= 2025) {
                 // 检查时间差异：只有当差异超过1小时时才同步，避免因时区问题导致的小差异
-                if (abs((int)time_diff) > 3600) { // 1小时 = 3600秒
+                if (abs((int)time_diff) > 60) { // 1小时 = 3600秒
                     ESP_LOGI(TAG, "Large time difference detected (%lld sec), syncing RTC to system", time_diff);
                     
                     // 使用RTC时间更新系统时间
@@ -336,6 +336,11 @@ void TimeSyncManager::OnNtpSyncComplete(bool success, const std::string& message
     if (success) {
         ESP_LOGI(TAG, "Time synchronized successfully");
         
+        // 关键修复：NTP同步完成后确保时区设置正确
+        setenv("TZ", "CST-8", 1);
+        tzset();
+        ESP_LOGI(TAG, "Timezone confirmed in TimeSyncManager after NTP sync: CST-8 (UTC+8)");
+        
         // 确保系统时间正确设置
         time_t current_time;
         time(&current_time);
@@ -442,6 +447,10 @@ bool TimeSyncManager::GetUnifiedTimestamp(time_t* timestamp) {
 // 打印当前时间状态（用于调试）
 void TimeSyncManager::PrintCurrentTimeStatus() {
     ESP_LOGI(TAG, "=== Current Time Status Debug ===");
+    
+    // 确保时区设置正确
+    setenv("TZ", "CST-8", 1);
+    tzset();
     
     // 系统时间
     time_t system_time;

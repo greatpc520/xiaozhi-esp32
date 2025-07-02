@@ -77,6 +77,9 @@ public:
     void SaveAnimationFromSDConfig(const char* anim_name);    // 只保存SD动画配置
     void SaveAnimationFromNetworkConfig(const char* url);     // 只保存网络动画配置
     
+    // 新增：显示听状态动画
+    void ShowListenAnimation();                               // 在animation_label_中显示听状态图片0
+    
     // 新增：JPG解码相关
     bool DecodeJpgFromSD(const char* filename, uint8_t** rgb565_data, int* width, int* height);
     bool DownloadAndDecodeJpg(const char* url, const char* local_filename);

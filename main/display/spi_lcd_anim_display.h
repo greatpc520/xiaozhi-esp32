@@ -44,6 +44,7 @@ public:
     // 拍照并显示到动画图片对象
     void CaptureAndShowPhoto();
     void showurl(const char *url);
+    void ShowEmotionImage(lv_obj_t* obj,int frame);
 
 protected:
     int role_id_ = 0;

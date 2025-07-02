@@ -34,6 +34,11 @@ enum AecMode {
     kAecOnServerSide,
 };
 
+enum AudioChannelClosedMode {
+    kAudioChannelClosedModeNormal = 1,      // 模式1：没有变化
+    kAudioChannelClosedModeWithActions = 2  // 模式2：执行motor_down和backlight_down
+};
+
 enum DeviceState {
     kDeviceStateUnknown,
     kDeviceStateStarting,
@@ -84,6 +89,10 @@ public:
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     BackgroundTask* GetBackgroundTask() const { return background_task_; }
+    
+    // 新增：AudioChannelClosed模式设置和获取方法
+    void SetAudioChannelClosedMode(AudioChannelClosedMode mode);
+    AudioChannelClosedMode GetAudioChannelClosedMode() const { return audio_channel_closed_mode_; }
 
 private:
     Application();
@@ -101,6 +110,7 @@ private:
     volatile DeviceState device_state_ = kDeviceStateUnknown;
     ListeningMode listening_mode_ = kListeningModeAutoStop;
     AecMode aec_mode_ = kAecOff;
+    AudioChannelClosedMode audio_channel_closed_mode_ = kAudioChannelClosedModeNormal;  // 默认模式1
 
     bool aborted_ = false;
     bool voice_detected_ = false;
@@ -138,6 +148,10 @@ private:
     void OnClockTimer();
     void SetListeningMode(ListeningMode mode);
     void AudioLoop();
+    
+    // 新增：私有方法用于加载和保存AudioChannelClosed模式配置
+    void LoadAudioChannelClosedMode();
+    void SaveAudioChannelClosedMode();
 };
 
 #endif // _APPLICATION_H_

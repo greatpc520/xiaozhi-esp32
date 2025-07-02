@@ -13,6 +13,7 @@
 // #include "display/spi_lcd_anim_display.h"
 #include "mcp_server.h"
 #include "audio_debugger.h"
+#include "settings.h"
 
 #if CONFIG_USE_AUDIO_PROCESSOR
 #include "afe_audio_processor.h"
@@ -62,6 +63,15 @@ void set_backlight(uint8_t brightness)
 
     motor->setbl(level);
 }
+void backlight_up()
+{
+    set_backlight(1);
+}
+void backlight_down()
+{
+    set_backlight(0);   
+}
+
 void control_motor(uint8_t motorid, int steps, bool direction)
 {
     static bool isup = true;
@@ -84,6 +94,16 @@ void control_motor(uint8_t motorid, int steps, bool direction)
     motor_thread.detach();
    
 }
+void motor_down()
+{
+   control_motor(1,100,0); //mc
+}
+void motor_up()
+{
+    control_motor(1,100,1); //mc
+}
+
+
 Application::Application() {
     event_group_ = xEventGroupCreate();
     background_task_ = new BackgroundTask(4096 * 7);
@@ -121,6 +141,9 @@ Application::Application() {
         .skip_unhandled_events = true
     };
     esp_timer_create(&clock_timer_args, &clock_timer_handle_);
+    
+    // 加载AudioChannelClosed操作模式配置
+    LoadAudioChannelClosedMode();
 }
 
 Application::~Application() {
@@ -522,8 +545,15 @@ void Application::Start() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
-            // control_motor(1,100,0); //mc
-            // set_backlight(0); //mc
+            
+            // 根据配置决定是否执行motor_down和backlight_down
+            if (audio_channel_closed_mode_ == kAudioChannelClosedModeWithActions) {
+                ESP_LOGI(TAG, "AudioChannelClosed mode 2: executing motor_down and backlight_down");
+                motor_down();
+                backlight_down();
+            } else {
+                ESP_LOGI(TAG, "AudioChannelClosed mode 1: no additional actions");
+            }
         });
     });
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
@@ -746,6 +776,10 @@ void Application::Start() {
                 // SetDeviceState(kDeviceStateIdle);
                 SetDeviceState(kDeviceStateListening);
                 // control_motor(1,100,1);
+                if (audio_channel_closed_mode_ == kAudioChannelClosedModeWithActions) {
+                    motor_up();
+                    backlight_up();
+                }
             } else if (device_state_ == kDeviceStateSpeaking) {
                 AbortSpeaking(kAbortReasonWakeWordDetected);
             } else if (device_state_ == kDeviceStateActivating) {
@@ -1193,4 +1227,33 @@ void Application::SetAecMode(AecMode mode) {
             protocol_->CloseAudioChannel();
         }
     });
+}
+
+void Application::SetAudioChannelClosedMode(AudioChannelClosedMode mode) {
+    if (audio_channel_closed_mode_ != mode) {
+        audio_channel_closed_mode_ = mode;
+        SaveAudioChannelClosedMode();
+        ESP_LOGI(TAG, "AudioChannelClosed mode set to: %d", static_cast<int>(mode));
+    }
+}
+
+void Application::LoadAudioChannelClosedMode() {
+    Settings settings("app_config", false);  // 只读模式
+    int32_t mode = settings.GetInt("acc_mode", static_cast<int32_t>(kAudioChannelClosedModeNormal));
+    
+    // 验证模式值的有效性
+    if (mode == static_cast<int32_t>(kAudioChannelClosedModeNormal) || 
+        mode == static_cast<int32_t>(kAudioChannelClosedModeWithActions)) {
+        audio_channel_closed_mode_ = static_cast<AudioChannelClosedMode>(mode);
+        ESP_LOGI(TAG, "Loaded AudioChannelClosed mode: %ld", (long)mode);
+    } else {
+        ESP_LOGW(TAG, "Invalid AudioChannelClosed mode in storage: %ld, using default", (long)mode);
+        audio_channel_closed_mode_ = kAudioChannelClosedModeNormal;
+    }
+}
+
+void Application::SaveAudioChannelClosedMode() {
+    Settings settings("app_config", true);  // 读写模式
+    settings.SetInt("acc_mode", static_cast<int32_t>(audio_channel_closed_mode_));
+    ESP_LOGI(TAG, "Saved AudioChannelClosed mode: %d", static_cast<int>(audio_channel_closed_mode_));
 }

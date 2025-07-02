@@ -258,7 +258,9 @@ private:
     {
         ESP_LOGI(TAG, "Init Pcf8574");
         pcf8574_ = new Pcf8574(i2c_bus_, 0x27,io_expander_);
-        
+        if (Application::GetInstance().GetAudioChannelClosedMode() == kAudioChannelClosedModeWithActions) {
+            xTaskCreate(motor_daemon, "motor", 2048*2, NULL, 1, NULL);
+        }
         // xTaskCreate(motor_daemon, "motor", 2048*2, NULL, 1, NULL);
         // 1开机：亮屏，复位+抬头，倾听动画
         // 2倾听：亮屏，抬头，倾听动画
@@ -885,8 +887,7 @@ public:
                 display_hour = 12;
             }
             
-            snprintf(alarm_text, sizeof(alarm_text), "%02d:%02d %s", 
-                    display_hour, alarm_tm.tm_min, am_pm);
+            snprintf(alarm_text, sizeof(alarm_text), "%s%02d:%02d", am_pm, display_hour, alarm_tm.tm_min);
             
             ESP_LOGI(TAG, "ShowClock: Scheduling alarm text setting: '%s'", alarm_text);
             

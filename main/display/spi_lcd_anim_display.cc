@@ -671,7 +671,26 @@ void SpiLcdAnimDisplay::ShowIdleImage()
     lv_img_set_src(anim_img_obj_, &img_desc);
     ESP_LOGI(TAG, "ShowIdleImage: %s", current_state_.c_str());
 }
-
+// listen_anim_cache[frame];
+void SpiLcdAnimDisplay::ShowEmotionImage(lv_obj_t* obj,int frame)
+{
+    // return;
+    if (!idle_img_cache)
+    {
+        ESP_LOGE(TAG, "idle_img_cache is NULL");
+        return;
+    }
+    // StopAnim();
+    static lv_img_dsc_t img_desc;
+    img_desc.header.cf = LV_COLOR_FORMAT_RGB565;
+    img_desc.header.w = FRAME_WIDTH;
+    img_desc.header.h = FRAME_HEIGHT;
+    img_desc.data_size = FRAME_SIZE;
+    img_desc.data = listen_anim_cache[frame];
+    ESP_LOGI(TAG, "ShowEmotionImage: img_desc=%p, data=%p", &img_desc, listen_anim_cache[frame]);
+    lv_img_set_src(obj, &img_desc);
+    // ESP_LOGI(TAG, "ShowEmotionImage: %s", current_state_.c_str());
+}
 // 定义图片下载任务的结构体
 struct DownloadImageParams
 {

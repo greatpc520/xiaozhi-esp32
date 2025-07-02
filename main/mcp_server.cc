@@ -911,6 +911,53 @@ void McpServer::AddCommonTools() {
             return "{\"success\": true, \"message\": \"Animation cleared\"}";
         });
 
+    // 添加AudioChannelClosed模式设置工具
+    AddTool("config.set_audio_channel_closed_mode", 
+        "设置待机时的操作模式\n"
+        "模式1 (value=1): 时钟界面（默认）\n"
+        "模式2 (value=2): 关闭屏幕并低头\n"
+        "此设置会持续化存储，断电后仍然有效。",
+        PropertyList({
+            Property("mode", kPropertyTypeInteger, 1, 1, 2)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            int mode = properties["mode"].value<int>();
+            
+            auto& app = Application::GetInstance();
+            if (mode == 1) {
+                app.SetAudioChannelClosedMode(kAudioChannelClosedModeNormal);
+                return "{\"success\": true, \"message\": \"AudioChannelClosed模式已设置为模式1：时钟界面\", \"mode\": 1}";
+            } else if (mode == 2) {
+                app.SetAudioChannelClosedMode(kAudioChannelClosedModeWithActions);
+                return "{\"success\": true, \"message\": \"AudioChannelClosed模式已设置为模式2：关闭屏幕并低头\", \"mode\": 2}";
+            } else {
+                return "{\"success\": false, \"message\": \"无效的模式值，必须是1或2\", \"mode\": " + std::to_string(mode) + "}";
+            }
+        });
+
+    AddTool("config.get_audio_channel_closed_mode", 
+        "获取当前待机时的操作模式\n"
+        "返回值：\n"
+        "模式1: 时钟界面\n"
+        "模式2: 关闭屏幕并低头",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            int current_mode = static_cast<int>(app.GetAudioChannelClosedMode());
+            
+            std::string mode_description;
+            if (current_mode == 1) {
+                mode_description = "时钟界面（默认）";
+            } else if (current_mode == 2) {
+                mode_description = "关闭屏幕并低头";
+            } else {
+                mode_description = "未知模式";
+            }
+            
+            return "{\"success\": true, \"current_mode\": " + std::to_string(current_mode) + 
+                   ", \"description\": \"" + mode_description + "\"}";
+        });
+
      // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
 }

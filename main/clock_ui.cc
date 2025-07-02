@@ -23,7 +23,7 @@ static const char* TAG = "ClockUI";
 // 声明可用的普惠字体
 // LV_FONT_DECLARE(font_puhui_30_4);  // 最大字体，用于时间
 LV_FONT_DECLARE(font_puhui_20_4);  // 中等字体
-LV_FONT_DECLARE(font_puhui_40_4);  // 中等字体
+LV_FONT_DECLARE(font_puhui_80_4);  // 中等字体
 // LV_FONT_DECLARE(font_puhui_16_4);  // 用于日期
 // LV_FONT_DECLARE(font_puhui_14_1);  // 最小字体，用于AM/PM
 
@@ -200,9 +200,9 @@ void ClockUI::CreateClockUI() {
     if (time_lbl) {
         time_label_ = time_lbl;
         lv_obj_set_style_text_color(time_lbl, lv_color_white(), 0);
-        lv_obj_set_style_text_font(time_lbl, &font_puhui_40_4, 0);
-        lv_obj_set_style_text_align(time_lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_pos(time_lbl, 0, LV_VER_RES / 2 - 50);  // 调整时间位置，稍微上移
+        lv_obj_set_style_text_font(time_lbl, &font_puhui_80_4, 0);
+        lv_obj_set_style_text_align(time_lbl, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_set_pos(time_lbl, 5, 40);  // 调整时间位置，稍微上移
         lv_obj_set_size(time_lbl, LV_HOR_RES, LV_SIZE_CONTENT);
         lv_label_set_text(time_lbl, "");
 
@@ -212,25 +212,25 @@ void ClockUI::CreateClockUI() {
         lv_obj_set_style_text_color(time_am_pm, lv_color_white(), 0);
         lv_obj_set_style_text_font(time_am_pm, &font_puhui_20_4, 0);
         lv_obj_set_style_text_align(time_am_pm, LV_TEXT_ALIGN_LEFT, 0);
-        lv_obj_set_pos(time_am_pm,  LV_HOR_RES/2 + 58, LV_VER_RES / 2 - 20);  // 调整AM/PM位置
+        lv_obj_set_pos(time_am_pm,  LV_HOR_RES-25, 50);  // 调整AM/PM位置
         lv_obj_set_size(time_am_pm, LV_HOR_RES, LV_SIZE_CONTENT);
         lv_label_set_text(time_am_pm, "");
     }
     }
     
-    // 创建64*64动画标签（在时间下面）
+    // 创建80*80动画标签（在时间下面，240*240图片的1/3大小）
     lv_obj_t* anim_lbl = lv_img_create(container);
     if (anim_lbl) {
         animation_label_ = anim_lbl;
-        lv_obj_set_size(anim_lbl, 64, 64);
+        lv_obj_set_size(anim_lbl, 120, 120);
         // 居中显示，位置在时间标签下方，与表情位置一致
-        lv_obj_set_pos(anim_lbl, (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 );  // 改为100，与表情位置保持一致
+        lv_obj_set_pos(anim_lbl, (LV_HOR_RES - 120) / 2, LV_VER_RES / 2 );  // 改为100，与表情位置保持一致
         lv_obj_set_style_bg_opa(anim_lbl, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(anim_lbl, 0, 0);
         lv_obj_set_style_pad_all(anim_lbl, 0, 0);
         lv_obj_set_style_radius(anim_lbl, 8, 0); // 轻微的圆角
         lv_obj_add_flag(anim_lbl, LV_OBJ_FLAG_HIDDEN); // 默认隐藏
-        ESP_LOGI(TAG, "64x64 animation label created at position (x=%ld, y=%ld)", (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 + 20);
+        ESP_LOGI(TAG, "80x80 animation label created at position (x=%ld, y=%ld)", (LV_HOR_RES - 120) / 2, LV_VER_RES / 2 + 20);
     } 
     
     // 创建日期标签（简化版本）
@@ -239,8 +239,8 @@ void ClockUI::CreateClockUI() {
         date_label_ = date_lbl;
         lv_obj_set_style_text_color(date_lbl, lv_color_white(), 0);
         lv_obj_set_style_text_font(date_lbl, &font_puhui_20_4, 0);
-        lv_obj_set_style_text_align(date_lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_pos(date_lbl, 0, 15);  // 日期位置稍微下调
+        lv_obj_set_style_text_align(date_lbl, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_set_pos(date_lbl, 5, 5);  // 日期位置稍微下调
         lv_obj_set_size(date_lbl, LV_HOR_RES, LV_SIZE_CONTENT);
         lv_label_set_text(date_lbl, "");
     }
@@ -249,17 +249,18 @@ void ClockUI::CreateClockUI() {
     lv_obj_t* alarm_container = lv_obj_create(container);
     if (alarm_container) {
         alarm_icon_label_ = alarm_container; // 重用变量作为容器指针
-        lv_obj_set_size(alarm_container, LV_HOR_RES, LV_SIZE_CONTENT);
-        lv_obj_set_pos(alarm_container, 0, LV_VER_RES - 50);  // 调整闹钟容器位置，上移10像素
+        lv_obj_set_size(alarm_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_pos(alarm_container, 120, 5);  // 放在日期标签后面（日期大约占用100像素）
         lv_obj_set_style_bg_opa(alarm_container, LV_OPA_TRANSP, 0); // 透明背景
         lv_obj_set_style_border_width(alarm_container, 0, 0);
         lv_obj_set_style_pad_all(alarm_container, 0, 0);
         lv_obj_set_style_radius(alarm_container, 0, 0);
         lv_obj_clear_flag(alarm_container, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_flex_flow(alarm_container, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(alarm_container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_flex_main_place(alarm_container, LV_FLEX_ALIGN_CENTER, 0);
+        lv_obj_set_flex_align(alarm_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_flex_main_place(alarm_container, LV_FLEX_ALIGN_START, 0);  // 从左开始排列
         lv_obj_set_style_flex_cross_place(alarm_container, LV_FLEX_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_column(alarm_container, 1 , 0);  // 设置flex项目间的列间距为1像素
         
         // 在容器内创建图标标签
         lv_obj_t* icon_lbl = lv_label_create(alarm_container);
@@ -267,7 +268,7 @@ void ClockUI::CreateClockUI() {
             lv_obj_set_style_text_color(icon_lbl, lv_color_make(255, 165, 0), 0); // 橙色
             lv_obj_set_style_text_font(icon_lbl, icon_font_ ? (const lv_font_t*)icon_font_ : &font_puhui_20_4, 0);
             lv_label_set_text(icon_lbl, "\uF071"); // Font Awesome 闹钟图标
-            lv_obj_set_style_pad_right(icon_lbl, 5, 0); // 与文字间距
+            lv_obj_set_style_pad_right(icon_lbl, 1, 0); // 与文字间距
         }
         
         // 在容器内创建文字标签
@@ -402,6 +403,9 @@ void ClockUI::Show() {
                 self->LoadWallpaperConfig();
                 self->LoadAnimationConfig();
                 
+                // 显示听状态动画
+                self->ShowListenAnimation();
+                
                                   // 先测试纯色背景
                 //   self->TestWallpaperWithColor();
                   
@@ -517,7 +521,7 @@ void ClockUI::HideAlarmNotification() {
     
     // 隐藏通知容器
     lv_obj_add_flag(notification_icon_label_, LV_OBJ_FLAG_HIDDEN);
-    //因擦表情标签
+    //隐藏80*80表情动画标签
     lv_obj_add_flag(animation_label_, LV_OBJ_FLAG_HIDDEN);
     notification_visible_ = false;
     
@@ -662,7 +666,7 @@ void ClockUI::UpdateTimeLabel() {
         
         // 使用分钟级别的比较，避免时区时间戳转换问题
         int current_minute = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-        if (current_minute == last_update_minute) {
+        if (current_minute == last_update_minute && last_update_minute != -1) {
             return; // 时间没变化，不需要更新
         }
         
@@ -670,12 +674,14 @@ void ClockUI::UpdateTimeLabel() {
         int hour = timeinfo.tm_hour;
         int minute = timeinfo.tm_min;
         // const char* am_pm = (hour >= 12) ? "PM" : "AM";
-        const char* am_pm = (hour >= 12) ? "下午" : "上午";
+        const char* am_pm = (hour >= 12) ? "下" : "上";
         
         if (hour == 0) {
             hour = 12;
+            lv_obj_set_pos(time_am_pm_label_,  LV_HOR_RES-25, 50);
         } else if (hour > 12) {
             hour -= 12;
+            lv_obj_set_pos(time_am_pm_label_,  LV_HOR_RES-25, 80);
         }
         
         // 更新时间显示 - 使用安全的snprintf
@@ -725,7 +731,7 @@ void ClockUI::UpdateDateLabel() {
         
         // 使用年月日组合值比较，避免时区时间戳转换问题
         int current_date = (timeinfo.tm_year + 1900) * 10000 + (timeinfo.tm_mon + 1) * 100 + timeinfo.tm_mday;
-        if (current_date == last_date_update) {
+        if (current_date == last_date_update && last_date_update != -1) {
             return;
         }
         
@@ -735,7 +741,7 @@ void ClockUI::UpdateDateLabel() {
         int weekday = (timeinfo.tm_wday >= 0 && timeinfo.tm_wday <= 6) ? timeinfo.tm_wday : 0;
         
         // 格式化日期显示，确保月份和日期的正确性 - 使用安全的snprintf
-        int ret = snprintf(date_str, sizeof(date_str), "%02d月%02d日 %s", 
+        int ret = snprintf(date_str, sizeof(date_str), "%02d/%02d%s", 
                  timeinfo.tm_mon + 1, timeinfo.tm_mday, weekdays[weekday]);
         if (ret >= sizeof(date_str)) {
             ESP_LOGW(TAG, "UpdateDateLabel: Date string truncated");
@@ -776,14 +782,16 @@ void ClockUI::ForceUpdateTimeLabel() {
     
     if (hour == 0) {
         hour = 12;
+        lv_obj_set_pos(time_am_pm_label_,  LV_HOR_RES-25, 50);
     } else if (hour > 12) {
         hour -= 12;
+        lv_obj_set_pos(time_am_pm_label_,  LV_HOR_RES-25, 80);
     }
     
     // 强制更新时间显示
     // snprintf(time_str, sizeof(time_str), "%d:%02d %s", hour, minute, is_pm ? "下午" : "上午");
     snprintf(time_str, sizeof(time_str), "%02d:%02d", hour, minute);
-    snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", is_pm ? "下午" : "上午");
+    snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", is_pm ? "下" : "上");
     
     if (lv_obj_is_valid(time_label_) && lv_obj_is_valid(time_am_pm_label_)) {
         lv_label_set_text(time_label_, time_str);
@@ -811,7 +819,7 @@ void ClockUI::ForceUpdateDateLabel() {
     int weekday = timeinfo.tm_wday;
     
     // 强制格式化日期显示
-    snprintf(date_str, sizeof(date_str), "%02d月%02d日 %s", 
+    snprintf(date_str, sizeof(date_str), "%02d/%02d %s", 
              timeinfo.tm_mon + 1, timeinfo.tm_mday, weekdays[weekday]);
     
     if (lv_obj_is_valid(date_label_)) {
@@ -837,6 +845,7 @@ void ClockUI::UpdateAlarmEmotionLabel() {
 }
 
 void ClockUI::SetAlarmEmotion(const std::string& emotion) {
+    return;//去掉闹钟表情的显示
     if (!animation_label_ || !is_visible_) {
         ESP_LOGD(TAG, "SetAlarmEmotion: animation_label_ is null or not visible");
         return;
@@ -890,14 +899,14 @@ void ClockUI::SetAlarmEmotion(const std::string& emotion) {
                 lv_obj_set_style_text_font(emotion_text_label, (const lv_font_t*)emoji_font_, 0);
             } else {
                 // 如果没有表情字体，使用大一点的文字字体
-                lv_obj_set_style_text_font(emotion_text_label, &font_puhui_40_4, 0);
+                lv_obj_set_style_text_font(emotion_text_label, &font_puhui_20_4, 0);
             }
             
             lv_obj_set_style_text_align(emotion_text_label, LV_TEXT_ALIGN_CENTER, 0);
             
             // 设置位置和大小，确保表情在时间下方不重叠的位置
-            lv_obj_set_size(emotion_text_label, 64, 64);
-            lv_obj_set_pos(emotion_text_label, (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 );  // 改为100，进一步下移避免重叠
+            lv_obj_set_size(emotion_text_label, 80, 80);
+            lv_obj_set_pos(emotion_text_label, (LV_HOR_RES - 80) / 2, LV_VER_RES / 2 );  // 改为100，进一步下移避免重叠
             
             // 设置表情文字
             lv_label_set_text(emotion_text_label, emotion_char.c_str());
@@ -906,13 +915,13 @@ void ClockUI::SetAlarmEmotion(const std::string& emotion) {
             lv_obj_set_style_text_align(emotion_text_label, LV_TEXT_ALIGN_CENTER, 0);
             
             ESP_LOGI(TAG, "Alarm emotion displayed: %s (character: %s) at position (x=%ld, y=%ld)", 
-                     emotion.c_str(), emotion_char.c_str(), (LV_HOR_RES - 64) / 2, LV_VER_RES / 2 + 100);
+                     emotion.c_str(), emotion_char.c_str(), (LV_HOR_RES - 80) / 2, LV_VER_RES / 2 + 100);
         } else {
             ESP_LOGE(TAG, "Failed to create emotion text label");
         }
     }
     
-    // 隐藏原来的动画标签（避免冲突）
+    // 隐藏原来的80*80动画标签（避免冲突）
     lv_obj_add_flag(animation_label_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1669,6 +1678,47 @@ void ClockUI::SaveAnimationFromNetworkConfig(const char* url) {
     SaveAnimationConfig();
     
     ESP_LOGI(TAG, "Network animation config saved (not applied)");
+}
+
+// 新增：显示听状态动画
+void ClockUI::ShowListenAnimation() {
+    if (!animation_label_ || !is_visible_) {
+        ESP_LOGE(TAG, "ShowListenAnimation: animation_label_ is null or not visible");
+        return;
+    }
+    
+    // 检查LVGL对象有效性
+    if (!lv_obj_is_valid(animation_label_)) {
+        ESP_LOGE(TAG, "ShowListenAnimation: animation_label_ object is invalid");
+        return;
+    }
+    
+    // 检查display_是否为SpiLcdAnimDisplay类型
+    if (!display_) {
+        ESP_LOGE(TAG, "ShowListenAnimation: display_ is null");
+        return;
+    }
+    
+    // 使用static_cast转换为SpiLcdAnimDisplay
+    auto* spi_anim_display = static_cast<SpiLcdAnimDisplay*>(display_);
+    if (!spi_anim_display) {
+        ESP_LOGE(TAG, "ShowListenAnimation: failed to cast display_ to SpiLcdAnimDisplay");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Showing listen animation on animation_label_");
+    
+    // 显示animation_label_（取消隐藏）
+    lv_obj_clear_flag(animation_label_, LV_OBJ_FLAG_HIDDEN);
+    
+    // 调用SpiLcdAnimDisplay::ShowEmotionImage显示听状态图片0
+    spi_anim_display->ShowEmotionImage(animation_label_, 0);
+    
+    // 设置图片缩放为1/3大小（原图240*240，缩放到80*80）
+    // LVGL的zoom值：256表示1倍，85表示约1/3倍 (256/3≈85)
+    lv_img_set_zoom(animation_label_, 128);
+    
+    ESP_LOGI(TAG, "Listen animation displayed successfully with 1/3 scale");
 }
 
 // 新增：从SD卡解码JPG图片（完整实现）
