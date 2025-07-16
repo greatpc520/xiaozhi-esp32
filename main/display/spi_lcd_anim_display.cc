@@ -130,6 +130,20 @@ static void FreeCache(uint8_t **cache, int max_count)
     }
 }
 
+/**
+ * @brief 从指定目录加载RAW格式的帧数据到缓存
+ * 
+ * 遍历目录下所有.raw/.RAW文件，按文件名排序后加载到预先分配的缓存数组中。
+ * 每个文件将被读取为固定大小(FRAME_SIZE)的二进制数据，使用SPIRAM内存分配。
+ * 
+ * @param dir 要扫描的目录路径
+ * @param cache 输出缓存数组指针(需预先分配max_count长度)
+ * @param max_count 最大可加载的帧数
+ * @param out_count 实际成功加载的帧数(输出参数)
+ * 
+ * @note 加载失败时会自动释放对应缓存，成功加载的帧数通过out_count返回
+ * @note 函数内部会先调用FreeCache释放原有缓存
+ */
 static void LoadRawFrames(const std::string &dir, uint8_t **cache, int max_count, int &out_count)
 {
     FreeCache(cache, max_count);
@@ -696,6 +710,7 @@ struct DownloadImageParams
 {
     const char *url;
     LcdDisplay *display;
+    int timeout;
 };
 
 // 定义消息结构体
@@ -705,6 +720,7 @@ typedef struct
     lv_img_dsc_t *img_desc;
     unsigned width;
     unsigned height;
+    int timeout;
 } lvgl_canvas_update_t;
 
 // LVGL更新回调函数 - 修改为使用画布显示
@@ -741,17 +757,19 @@ static void lvgl_update_cb(void *data)
             ESP_LOGW(TAG, "不支持的图片格式，无法绘制到画布: %d", update->img_desc->header.cf);
         }
 
-        // 创建一个 FreeRTOS 任务，在 3 秒后销毁画布
+        // 创建一个 FreeRTOS 任务，在指定时间后销毁画布
         struct HideTaskParam
         {
             LcdDisplay *display;
+            int timeout;
         };
         auto *hide_param = (HideTaskParam *)malloc(sizeof(HideTaskParam));
         hide_param->display = update->display;
+        hide_param->timeout = update->timeout;
         xTaskCreate([](void *arg)
                     {
             auto* hp = (HideTaskParam*)arg;
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            vTaskDelay(pdMS_TO_TICKS(hp->timeout*1000));
             lv_async_call([](void* display_ptr){
                 LcdDisplay* display = (LcdDisplay*)display_ptr;
                 if (display && display->HasCanvas()) {
@@ -1283,6 +1301,16 @@ bool decodePngImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height)
             return false;
         }
 
+        // 解码前检查是否有足够SPIRAM（需要约450KB）
+        size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        if (free_spiram < 450 * 1024) {
+            ESP_LOGE(TAG, "Insufficient SPIRAM for PNG decode");
+            return false;
+        }
+
+        // 预先分配内存避免重分配
+        // image.reserve(240 * 240 * 4);
+
         // 在解码前设置状态，禁用CRC检查
         lodepng::State state;
         state.decoder.ignore_crc = 1;
@@ -1291,7 +1319,7 @@ bool decodePngImage(lv_img_dsc_t &img_desc, unsigned &width, unsigned &height)
         // 修改解码参数，使用 RGBA 格式
         unsigned error = lodepng::decode(image, width, height, state, httpbuffer, image_buffer_size);
 
-        // 释放下载缓冲区
+        // 立即释放下载缓冲区以节省内存
         heap_caps_free(httpbuffer);
         httpbuffer = NULL;
 
@@ -1677,7 +1705,7 @@ static void download_image_task(void *arg)
 {
     DownloadImageParams *params = (DownloadImageParams *)arg;
     static lv_img_dsc_t img_desc;
-
+    int timeout = params->timeout;
     // 检查可用内存
     size_t free_heap = esp_get_free_heap_size();
     size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
@@ -1700,6 +1728,7 @@ static void download_image_task(void *arg)
             update->img_desc = &img_desc;
             update->width = img_desc.header.w;
             update->height = img_desc.header.h;
+            update->timeout = timeout;
             // 发送到LVGL任务队列
             lv_async_call(lvgl_update_cb, update);
         }
@@ -1717,11 +1746,22 @@ cleanup:
 
     vTaskDelete(NULL);
 }
-void SpiLcdAnimDisplay::showurl(const char *url) {
+
+
+
+void SpiLcdAnimDisplay::showurl(const char *url, int timeout) {
+    if (timeout < 1) {
+        //如果画布打开了就关闭画布
+        if (HasCanvas()) {
+            DestroyCanvas();
+        }
+        return;
+    }
      if (url && strncmp(url, "http", 4) == 0)
     {
         // 如果是URL，下载图片并显示到画布
         ESP_LOGI(TAG, "SetEmotion: downloading image from URL: %s", url);
+        SetAnimState("showurl");
 
         // 创建下载参数
         DownloadImageParams *params = (DownloadImageParams *)malloc(sizeof(DownloadImageParams));
@@ -1734,9 +1774,120 @@ void SpiLcdAnimDisplay::showurl(const char *url) {
         // 复制URL字符串
         params->url = strdup(url);
         params->display = this;
-
+        params->timeout = timeout;
         // 启动下载任务
         xTaskCreate(download_image_task, "download_url", 8192, params, 2, NULL);
+    }else{
+        ESP_LOGI(TAG, "Displaying local RAW image: %s", url);
+        //显示本地RAW图片到画布
+        std::string urlstr = "/sdcard/";
+        urlstr += url;
+        
+        // 创建画布
+        if (!HasCanvas()) {
+            CreateCanvas();
+        }
+        
+        //读取RAW文件并解码到画布
+        FILE* fp = fopen(urlstr.c_str(), "rb");
+        if (!fp) {
+            ESP_LOGE(TAG, "无法打开RAW图片文件: %s", urlstr.c_str());
+            if (HasCanvas()) {
+                DestroyCanvas();
+            }
+            return;
+        }
+        
+        // 检查文件大小，默认假设是240x240的RGB565格式
+        fseek(fp, 0, SEEK_END);
+        long file_size = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+        
+        // 根据文件大小推断图片尺寸
+        int width = 240, height = 240;
+        size_t expected_size_240 = 240 * 240 * 2;
+        size_t expected_size_320 = 320 * 240 * 2;
+        size_t expected_size_480 = 480 * 320 * 2;
+        
+        if (file_size == expected_size_240) {
+            width = height = 240;
+        } else if (file_size == expected_size_320) {
+            width = 320; height = 240;
+        } else if (file_size == expected_size_480) {
+            width = 480; height = 320;
+        } else {
+            // 尝试根据大小推算正方形图片
+            size_t pixels = file_size / 2;
+            width = height = (int)sqrt(pixels);
+            ESP_LOGW(TAG, "Unknown RAW size %ld, assuming %dx%d", file_size, width, height);
+        }
+        
+        size_t expected_size = width * height * 2;
+        if (file_size != expected_size) {
+            ESP_LOGE(TAG, "RAW文件大小不匹配: 期望%zu字节, 实际%ld字节", expected_size, file_size);
+            fclose(fp);
+            if (HasCanvas()) {
+                DestroyCanvas();
+            }
+            return;
+        }
+        
+        // 分配内存读取RGB565数据
+        uint8_t* rgb565_data = (uint8_t*)heap_caps_malloc(expected_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!rgb565_data) {
+            ESP_LOGE(TAG, "SPIRAM分配RGB565缓冲区失败，大小: %zu", expected_size);
+            fclose(fp);
+            if (HasCanvas()) {
+                DestroyCanvas();
+            }
+            return;
+        }
+        
+        // 读取文件数据
+        size_t read_size = fread(rgb565_data, 1, expected_size, fp);
+        fclose(fp);
+        
+        if (read_size != expected_size) {
+            ESP_LOGE(TAG, "RAW文件读取不完整: 期望%zu字节, 实际%zu字节", expected_size, read_size);
+            heap_caps_free(rgb565_data);
+            if (HasCanvas()) {
+                DestroyCanvas();
+            }
+            return;
+        }
+        
+        // 绘制到画布
+        DrawImageOnCanvas(0, 0, width, height, rgb565_data);
+        ESP_LOGI(TAG, "RAW图片已绘制到画布: %dx%d, 文件: %s", width, height, urlstr.c_str());
+        
+        // 释放图片数据内存
+        heap_caps_free(rgb565_data);
+        
+        // 创建延时任务来关闭画布
+        if (timeout > 0) {
+            struct HideTaskParam {
+                LcdDisplay *display;
+                int timeout;
+            };
+            auto *hide_param = (HideTaskParam *)malloc(sizeof(HideTaskParam));
+            if (hide_param) {
+                hide_param->display = this;
+                hide_param->timeout = timeout;
+                xTaskCreate([](void *arg) {
+                    auto* hp = (HideTaskParam*)arg;
+                    vTaskDelay(pdMS_TO_TICKS(hp->timeout * 1000));
+                    lv_async_call([](void* display_ptr) {
+                        LcdDisplay* display = (LcdDisplay*)display_ptr;
+                        if (display && display->HasCanvas()) {
+                            display->DestroyCanvas();
+                            ESP_LOGI(TAG, "已自动关闭RAW图片画布");
+                        }
+                    }, hp->display);
+                    free(hp);
+                    vTaskDelete(NULL);
+                }, "hide_raw_img", 2048, hide_param, 1, NULL);
+            }
+        }
     }
 }
 void SpiLcdAnimDisplay::SetEmotion(const char *emotion)
@@ -1761,6 +1912,7 @@ void SpiLcdAnimDisplay::SetEmotion(const char *emotion)
         // 复制URL字符串
         params->url = strdup(emotion);
         params->display = this;
+        params->timeout = 3;  // 默认3秒超时
 
         // 启动下载任务
         xTaskCreate(download_image_task, "download_emotion", 8192, params, 2, NULL);
@@ -1868,6 +2020,7 @@ void SpiLcdAnimDisplay::SetEmotion(const char *emotion)
             std::string url = "http://www.replime.cn/ejpg/" + std::string(it->text) + ".jpg";
             params->url = strdup(url.c_str());
             params->display = this;
+            params->timeout = 3;  // 默认3秒超时
 
             // 启动下载任务
             xTaskCreate(download_image_task, "download_emotion", 8192, params, 2, NULL);

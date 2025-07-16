@@ -467,7 +467,12 @@ void McpServer::AddCommonTools() {
    
 
     // Add Image Display related tools
-    AddTool("showurlimg", "显示网络图片", PropertyList(), [&board](const PropertyList& parameters) -> ReturnValue {
+    AddTool("showurlimg", "显示网络图片", 
+    PropertyList({
+            Property("url", kPropertyTypeString),
+            Property("timeout", kPropertyTypeInteger, 0, 5),
+        }),
+    [&board](const PropertyList& parameters) -> ReturnValue {
         auto display = board.GetDisplay();
         if (!display) {
             return "{\"success\": false, \"message\": \"Display not available\"}";
@@ -479,8 +484,9 @@ void McpServer::AddCommonTools() {
             return "{\"success\": false, \"message\": \"Invalid display type\"}";
         }
 
-        const char* url = "http://www.replime.cn/ejpg/laughing.jpg";
-        anim_display->showurl(url);
+        const char* url = parameters["url"].value<std::string>().c_str();
+        int timeout = parameters["timeout"].value<int>();
+        anim_display->showurl(url, timeout);
         
         return "{\"success\": true, \"message\": \"Image display request sent\", \"url\": \"" + std::string(url) + "\"}";
     });

@@ -10,7 +10,7 @@
 #include "iot/thing_manager.h"
 #include "assets/lang_config.h"
 // #include "camera_service.h"
-// #include "display/spi_lcd_anim_display.h"
+#include "display/spi_lcd_anim_display.h"
 #include "mcp_server.h"
 #include "audio_debugger.h"
 #include "settings.h"
@@ -642,6 +642,49 @@ void Application::Start() {
                 Alert(status->valuestring, message->valuestring, emotion->valuestring, Lang::Sounds::P3_VIBRATION);
             } else {
                 ESP_LOGW(TAG, "Alert command requires status, message and emotion");
+            }
+        } else if (strcmp(type->valuestring, "image") == 0) {
+        //              {
+        // "type": "image/animation/audio",
+        // "source": "local/url",
+        // "url": "http://www.example.com/",
+        // "files":["a.jpg","b.jpg"]
+        // "timeout": 5,
+        // "status": "start/end"
+        // }
+            auto status = cJSON_GetObjectItem(root, "status");
+            auto source = cJSON_GetObjectItem(root, "source");
+            auto url = cJSON_GetObjectItem(root, "url");
+            auto files = cJSON_GetObjectItem(root, "files");
+            auto timeout = cJSON_GetObjectItem(root, "timeout");
+            // ESP_LOGI(TAG, "Image command: %s, %s, %s, %s, %d", status->valuestring, source->valuestring, url->valuestring, files->valuestring, timeout->valueint);
+            if ( cJSON_IsString(url) && cJSON_IsArray(files) && cJSON_IsNumber(timeout)) {
+                std::string urlstr;
+                if (strcmp(source->valuestring, "local") == 0) {
+                    urlstr = "";
+                } else if (strcmp(source->valuestring, "url") == 0) {
+                    urlstr = url->valuestring;
+                }
+                std::vector<std::string> file_list;
+                for (int i = 0; i < cJSON_GetArraySize(files); i++) {
+                    auto file = cJSON_GetArrayItem(files, i);
+                    if (cJSON_IsString(file)) {
+                        file_list.push_back(file->valuestring);
+                    }
+                }
+                for (auto& file : file_list) {
+                    urlstr += "/" + file;
+                }
+                auto anim_display = static_cast<SpiLcdAnimDisplay*>(display);
+                if (!anim_display) {
+                    ESP_LOGW(TAG, "Invalid display type");
+                    return;
+                }
+                
+                anim_display->showurl(urlstr.c_str(), timeout->valueint);
+                
+            } else {
+                ESP_LOGW(TAG, "Image command requires status, url, files and timeout");
             }
         } else {
             ESP_LOGW(TAG, "Unknown message type: %s", type->valuestring);

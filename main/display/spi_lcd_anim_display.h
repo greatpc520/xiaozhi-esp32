@@ -43,7 +43,7 @@ public:
 
     // 拍照并显示到动画图片对象
     void CaptureAndShowPhoto();
-    void showurl(const char *url);
+    void showurl(const char *url, int timeout=1);
     void ShowEmotionImage(lv_obj_t* obj,int frame);
 
 protected:
