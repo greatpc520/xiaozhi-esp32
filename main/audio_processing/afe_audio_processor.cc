@@ -58,7 +58,7 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec) {
         auto this_ = (AfeAudioProcessor*)arg;
         this_->AudioProcessorTask();
         vTaskDelete(NULL);
-    }, "audio_communication", 4096, this, 3, NULL);//3 to 1
+    }, "audio_communication", 4096, this, 6, NULL);// 优先级由3提升到6
 }
 
 AfeAudioProcessor::~AfeAudioProcessor() {

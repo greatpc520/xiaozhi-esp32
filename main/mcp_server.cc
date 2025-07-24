@@ -994,21 +994,42 @@ void McpServer::ParseMessage(const std::string& message) {
 }
 
 void McpServer::ParseCapabilities(const cJSON* capabilities) {
+    if (!capabilities || !cJSON_IsObject(capabilities)) {
+        ESP_LOGE(TAG, "ParseCapabilities: capabilities is null or not an object");
+        return;
+    }
+    char* cap_str = cJSON_PrintUnformatted(capabilities);
+    ESP_LOGI(TAG, "ParseCapabilities input: %s", cap_str ? cap_str : "<null>");
+    if (cap_str) free(cap_str);
     auto vision = cJSON_GetObjectItem(capabilities, "vision");
+    if (!vision) {
+        ESP_LOGW(TAG, "ParseCapabilities: no 'vision' field");
+        return;
+    }
     if (cJSON_IsObject(vision)) {
+        char* vision_str = cJSON_PrintUnformatted(vision);
+        ESP_LOGI(TAG, "ParseCapabilities vision: %s", vision_str ? vision_str : "<null>");
+        if (vision_str) free(vision_str);
         auto url = cJSON_GetObjectItem(vision, "url");
         auto token = cJSON_GetObjectItem(vision, "token");
-        if (cJSON_IsString(url)) {
+        if (url && cJSON_IsString(url)) {
             auto camera = Board::GetInstance().GetCamera();
             if (camera) {
                 std::string url_str = std::string(url->valuestring);
                 std::string token_str;
-                if (cJSON_IsString(token)) {
+                if (token && cJSON_IsString(token)) {
                     token_str = std::string(token->valuestring);
                 }
+                ESP_LOGI(TAG, "ParseCapabilities: set camera explain url: %s, token: %s", url_str.c_str(), token_str.c_str());
                 camera->SetExplainUrl(url_str, token_str);
+            } else {
+                ESP_LOGW(TAG, "ParseCapabilities: camera is null");
             }
+        } else {
+            ESP_LOGW(TAG, "ParseCapabilities: 'url' field missing or not string");
         }
+    } else {
+        ESP_LOGW(TAG, "ParseCapabilities: 'vision' is not an object");
     }
 }
 

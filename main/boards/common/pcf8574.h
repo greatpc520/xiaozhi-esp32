@@ -24,7 +24,7 @@
 // #define SCL_PIN 8
 // #define INT_PIN 46
 
-#define MOTOR_ENABLE_PIN     GPIO_NUM_33    // 电机开关引脚
+#define MOTOR_ENABLE_PIN     GPIO_NUM_33    // 电机开关引脚 P4
 #include "i2c_device.h" // Ensure this header defines the I2cDevice class
 #include "esp_log.h"    // Include ESP-IDF logging header for ESP_LOGI
 #include "freertos/FreeRTOS.h" // Include FreeRTOS header for pdMS_TO_TICKS
@@ -40,10 +40,12 @@ public:
     {
         // uint8_t chip_id = ReadReg(0xA7);
         // ESP_LOGI(PCF8574_TAG, "Get chip ID: 0x%02X", chip_id);
-        // read_buffer_ = new uint8_t[6];
+        // read_buffer_ = new uint8_t[6]; 
         i2c_bus_=i2c_bus;
         io_expander_=io_expander;
+        #if !defined(CONFIG_BOARD_TYPE_GCTCAM_P4_LCD)
         InitializeTca9554_2();
+        #endif
         // InitializeTca9554();
         ESP_LOGI(PCF8574_TAG, "PCF8574+tca2 initialized successfully");
     }
@@ -61,7 +63,9 @@ public:
 
     void setbl(uint8_t level )
     {
-         ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander_,IO_EXPANDER_PIN_NUM_1, level));
+        #if !defined(CONFIG_BOARD_TYPE_GCTCAM_P4_LCD)
+        ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander_,IO_EXPANDER_PIN_NUM_1, level));
+        #endif
     }
 
      void setled(uint8_t level )
@@ -199,22 +203,30 @@ private:
     }
     void motor_en_init()
     {
+        #if defined(CONFIG_BOARD_TYPE_GCTCAM_P4_LCD)
         // 配置电机开关引脚
-        // esp_rom_gpio_pad_select_gpio(MOTOR_ENABLE_PIN);
-        // gpio_set_direction(MOTOR_ENABLE_PIN, GPIO_MODE_OUTPUT);
-        // gpio_set_level(MOTOR_ENABLE_PIN, 1);
+        esp_rom_gpio_pad_select_gpio(MOTOR_ENABLE_PIN);
+        gpio_set_direction(MOTOR_ENABLE_PIN, GPIO_MODE_OUTPUT);
+        gpio_set_level(MOTOR_ENABLE_PIN, 1);
+        #endif
     }
     void motor_enable()
     {
-        // motor_en_init();
-        // gpio_set_level(MOTOR_ENABLE_PIN, 1);
+        #if defined(CONFIG_BOARD_TYPE_GCTCAM_P4_LCD)
+        motor_en_init();
+        gpio_set_level(MOTOR_ENABLE_PIN, 1);
+        #else
         ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander2_, IO_EXPANDER_PIN_NUM_7, 1));
+        #endif
     }
     void motor_disable()
     {
-        // motor_en_init();
-        // gpio_set_level(MOTOR_ENABLE_PIN, 0);
+        #if defined(CONFIG_BOARD_TYPE_GCTCAM_P4_LCD)
+        motor_en_init();
+        gpio_set_level(MOTOR_ENABLE_PIN, 0);
+        #else
         ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander2_, IO_EXPANDER_PIN_NUM_7, 0));
+        #endif
     }
     void stopMotors()
     {

@@ -171,7 +171,7 @@ void TimeSyncManager::TriggerNtpSync() {
         auto* manager = static_cast<TimeSyncManager*>(param);
         manager->SmartNtpSync();
         vTaskDelete(nullptr);
-    }, "smart_ntp_sync", 6144, this, 4, nullptr);  // 降低优先级避免干扰关键任务
+    }, "smart_ntp_sync", 8192, this, 4, nullptr);  // 降低优先级避免干扰关键任务
 }
 
 void TimeSyncManager::ForceNtpSync() {
@@ -275,6 +275,7 @@ void TimeSyncManager::SmartNtpSync() {
             if (sync_success) {
                 ESP_LOGI(TAG, "Smart NTP sync completed successfully on attempt %d", retry_count + 1);
                 return;
+                // break;
             } else {
                 ESP_LOGW(TAG, "NTP sync failed on attempt %d, will retry", retry_count + 1);
             }

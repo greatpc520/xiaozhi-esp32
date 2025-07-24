@@ -1,3 +1,4 @@
+#if !CONFIG_IDF_TARGET_ESP32P4
 #include "iot/thing.h"
 #include "board.h"
 #include "display/lcd_display.h"
@@ -677,3 +678,5 @@ public:
 } // namespace iot
 
 DECLARE_THING(Camera);
+
+#endif

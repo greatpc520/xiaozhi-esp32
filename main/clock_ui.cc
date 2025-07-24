@@ -406,7 +406,7 @@ void ClockUI::Show() {
                 // 显示听状态动画
                 self->ShowListenAnimation();
                 
-                                  // 先测试纯色背景
+                // 先测试纯色背景
                 //   self->TestWallpaperWithColor();
                   
                 //   // 延迟3秒后尝试加载图片壁纸
@@ -634,6 +634,11 @@ void ClockUI::ForceUpdateDisplay() {
     
     // 强制更新日期标签  
     ForceUpdateDateLabel();
+    
+    // 重置时间缓存，确保下次正常更新能正确工作
+    last_displayed_hour_ = -1;
+    last_displayed_minute_ = -1;
+    last_displayed_day_ = -1;
 }
 
 void ClockUI::UpdateTimeLabel() {
@@ -697,6 +702,7 @@ void ClockUI::UpdateTimeLabel() {
         lv_label_set_text(time_label_, time_str);
         lv_label_set_text(time_am_pm_label_, time_am_pm_str);
         last_update_minute = current_minute;
+        ESP_LOGD(TAG, "Time updated to: %s %s", time_str, time_am_pm_str);
     } catch (...) {
         ESP_LOGE(TAG, "UpdateTimeLabel: Exception during time update");
     }
@@ -759,41 +765,6 @@ void ClockUI::UpdateDateLabel() {
         ESP_LOGE(TAG, "UpdateDateLabel: Exception during date update");
     }
 }
-
-void ClockUI::ForceUpdateTimeLabel() {
-    if (!time_label_ || !is_visible_) return;
-    
-    static char time_str[32];
-    static char time_am_pm_str[32];
-    
-    // 使用TimeSyncManager的统一时间获取函数
-    struct tm timeinfo;
-    auto& time_sync_manager = TimeSyncManager::GetInstance();
-    
-    if (!time_sync_manager.GetUnifiedTime(&timeinfo)) {
-        ESP_LOGW(TAG, "ForceUpdateTimeLabel: Failed to get unified time");
-        return;
-    }
-    
-    // 转换为12小时制
-    int hour = timeinfo.tm_hour;
-    int minute = timeinfo.tm_min;
-    bool is_pm = hour >= 12;
-    
-    if (hour == 0) {
-        hour = 12;
-        lv_obj_set_pos(time_am_pm_label_,  LV_HOR_RES-25, 50);
-    } else if (hour > 12) {
-        hour -= 12;
-        lv_obj_set_pos(time_am_pm_label_,  LV_HOR_RES-25, 80);
-    }
-    
-    // 强制更新时间显示
-    // snprintf(time_str, sizeof(time_str), "%d:%02d %s", hour, minute, is_pm ? "下午" : "上午");
-    snprintf(time_str, sizeof(time_str), "%02d:%02d", hour, minute);
-    snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", is_pm ? "下" : "上");
-    
-    if (lv_obj_is_valid(time_label_) && lv_obj_is_valid(time_am_pm_label_)) {
         lv_label_set_text(time_label_, time_str);
         lv_label_set_text(time_am_pm_label_, time_am_pm_str);
         ESP_LOGI(TAG, "Force updated time: %s %s", time_str, time_am_pm_str);

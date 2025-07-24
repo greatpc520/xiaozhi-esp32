@@ -49,6 +49,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_ESP32S3_KORVO2_V3
         bool "ESP32S3_KORVO2_V3开发板"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_GCTCAM_P4_LCD
+        bool "GCTCAM P4开发板（LCD）"
+        depends on IDF_TARGET_ESP32P4
     config BOARD_TYPE_ESP_SPARKBOT
         bool "ESP-SparkBot开发板"
         depends on IDF_TARGET_ESP32S3

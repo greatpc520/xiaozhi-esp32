@@ -698,11 +698,11 @@ void Application::Start() {
             //     free(json_str); // 打印后记得释放内存
             // }
             if (jsonstr != NULL) {
-                auto fileurl = cJSON_GetObjectItem(jsonstr, "fileurl");
-                if (fileurl != NULL) {
-                    // ESP_LOGI(TAG, "File URL: %s", fileurl->valuestring);
-                    display->SetEmotion(fileurl->valuestring);
-                }
+                // auto fileurl = cJSON_GetObjectItem(jsonstr, "fileurl");
+                // if (fileurl != NULL) {
+                //     // ESP_LOGI(TAG, "File URL: %s", fileurl->valuestring);
+                //     display->SetEmotion(fileurl->valuestring);
+                // }
                 auto roletype = cJSON_GetObjectItem(jsonstr, "roletype");
                 if (roletype != NULL) {
                     std::string role_id;
@@ -898,7 +898,7 @@ void Application::MainEventLoop() {
     vTaskPrioritySet(NULL, 3);
 
     // 注册当前任务到 WDT
-    // esp_task_wdt_add(NULL); // NULL 表示当前任务
+    esp_task_wdt_add(NULL); // NULL 表示当前任务
     while (true) {
         auto bits = xEventGroupWaitBits(event_group_, SCHEDULE_EVENT | SEND_AUDIO_EVENT, pdTRUE, pdFALSE, portMAX_DELAY);
 
@@ -919,9 +919,10 @@ void Application::MainEventLoop() {
             lock.unlock();
             for (auto& task : tasks) {
                 task();
+                esp_task_wdt_reset();
             }
         }
-        // esp_task_wdt_reset();
+        esp_task_wdt_reset();
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
