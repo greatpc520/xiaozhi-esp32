@@ -602,24 +602,18 @@ void ClockUI::UpdateTimerCallback(void* timer) {
 void ClockUI::UpdateClockDisplay() {
     // 增加更严格的安全检查
     if (!is_visible_ || !clock_container_ || !time_label_ || !date_label_) {
-        ESP_LOGD(TAG, "UpdateClockDisplay: UI components not ready");
         return;
     }
     
     // 检查LVGL对象有效性
     if (!lv_obj_is_valid(clock_container_) || !lv_obj_is_valid(time_label_) || !lv_obj_is_valid(date_label_)) {
-        ESP_LOGW(TAG, "UpdateClockDisplay: LVGL objects not valid");
         return;
     }
     
     // 简化的更新逻辑，避免复杂操作，减少函数调用层次
-    try {
-        UpdateTimeLabel();
-        UpdateDateLabel();
-        // 注意：闹钟信息由ShowClock()方法单独更新，这里不重复更新
-    } catch (...) {
-        ESP_LOGE(TAG, "UpdateClockDisplay: Exception during update");
-    }
+    UpdateTimeLabel();
+    UpdateDateLabel();
+    // 注意：闹钟信息由ShowClock()方法单独更新，这里不重复更新
 }
 
 void ClockUI::ForceUpdateDisplay() {
@@ -646,7 +640,6 @@ void ClockUI::UpdateTimeLabel() {
     
     // 检查LVGL对象有效性
     if (!lv_obj_is_valid(time_label_)) {
-        ESP_LOGW(TAG, "UpdateTimeLabel: time_label not valid");
         return;
     }
     
@@ -659,53 +652,54 @@ void ClockUI::UpdateTimeLabel() {
     struct tm timeinfo = {0};
     bool time_valid = false;
     
-    try {
-        // 使用TimeSyncManager的统一时间获取函数
-        auto& time_sync_manager = TimeSyncManager::GetInstance();
-        time_valid = time_sync_manager.GetUnifiedTime(&timeinfo);
-        
-        if (!time_valid) {
-            ESP_LOGW(TAG, "UpdateTimeLabel: Failed to get unified time");
-            return; // 时间无效，不更新
-        }
-        
-        // 使用分钟级别的比较，避免时区时间戳转换问题
-        int current_minute = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-        if (current_minute == last_update_minute && last_update_minute != -1) {
-            return; // 时间没变化，不需要更新
-        }
-        
-        // 转换为12小时制 - 简化逻辑
-        int hour = timeinfo.tm_hour;
-        int minute = timeinfo.tm_min;
-        // const char* am_pm = (hour >= 12) ? "PM" : "AM";
-        const char* am_pm = (hour >= 12) ? "下" : "上";
-        
-        if (hour == 0) {
-            hour = 12;
-            lv_obj_set_pos(time_am_pm_label_,  LV_HOR_RES-25, 50);
-        } else if (hour > 12) {
-            hour -= 12;
-            lv_obj_set_pos(time_am_pm_label_,  LV_HOR_RES-25, 80);
-        }
-        
-        // 更新时间显示 - 使用安全的snprintf
-        // int ret = snprintf(time_str, sizeof(time_str), "%d:%02d %s", hour, minute, am_pm);
-        int ret = snprintf(time_str, sizeof(time_str), "%02d:%02d", hour, minute);
-        snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", am_pm);
-        if (ret >= sizeof(time_str)) {
-            ESP_LOGW(TAG, "UpdateTimeLabel: Time string truncated");
-            return;
-        }
-        
-        // 确保在主线程中更新LVGL组件
-        lv_label_set_text(time_label_, time_str);
-        lv_label_set_text(time_am_pm_label_, time_am_pm_str);
-        last_update_minute = current_minute;
-        ESP_LOGD(TAG, "Time updated to: %s %s", time_str, time_am_pm_str);
-    } catch (...) {
-        ESP_LOGE(TAG, "UpdateTimeLabel: Exception during time update");
+    // 使用TimeSyncManager的统一时间获取函数
+    auto& time_sync_manager = TimeSyncManager::GetInstance();
+    time_valid = time_sync_manager.GetUnifiedTime(&timeinfo);
+    
+    if (!time_valid) {
+        return; // 时间无效，不更新
     }
+    
+    // 使用分钟级别的比较，避免时区时间戳转换问题
+    int current_minute = timeinfo.tm_hour * 60 + timeinfo.tm_min;
+    if (current_minute == last_update_minute && last_update_minute != -1) {
+        return; // 时间没变化，不需要更新
+    }
+    
+    // 转换为12小时制 - 简化逻辑
+    int hour = timeinfo.tm_hour;
+    int minute = timeinfo.tm_min;
+    const char* am_pm = (hour >= 12) ? "下" : "上";
+    
+    if (hour == 0) {
+        hour = 12;
+        if (time_am_pm_label_ && lv_obj_is_valid(time_am_pm_label_)) {
+            lv_obj_set_pos(time_am_pm_label_, LV_HOR_RES-25, 50);
+        }
+    } else if (hour > 12) {
+        hour -= 12;
+        if (time_am_pm_label_ && lv_obj_is_valid(time_am_pm_label_)) {
+            lv_obj_set_pos(time_am_pm_label_, LV_HOR_RES-25, 80);
+        }
+    }
+    
+    // 更新时间显示 - 使用安全的snprintf
+    int ret = snprintf(time_str, sizeof(time_str), "%02d:%02d", hour, minute);
+    snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", am_pm);
+    if (ret >= sizeof(time_str)) {
+        return;
+    }
+    
+    // 确保在主线程中更新LVGL组件
+    if (lv_obj_is_valid(time_label_)) {
+        lv_label_set_text(time_label_, time_str);
+    }
+    
+    if (time_am_pm_label_ && lv_obj_is_valid(time_am_pm_label_)) {
+        lv_label_set_text(time_am_pm_label_, time_am_pm_str);
+    }
+    
+    last_update_minute = current_minute;
 }
 
 void ClockUI::UpdateDateLabel() {
@@ -713,7 +707,6 @@ void ClockUI::UpdateDateLabel() {
     
     // 检查LVGL对象有效性
     if (!lv_obj_is_valid(date_label_)) {
-        ESP_LOGW(TAG, "UpdateDateLabel: date_label not valid");
         return;
     }
     
@@ -725,49 +718,78 @@ void ClockUI::UpdateDateLabel() {
     struct tm timeinfo = {0};
     bool time_valid = false;
     
-    try {
-        // 使用TimeSyncManager的统一时间获取函数
-        auto& time_sync_manager = TimeSyncManager::GetInstance();
-        time_valid = time_sync_manager.GetUnifiedTime(&timeinfo);
-        
-        if (!time_valid) {
-            ESP_LOGW(TAG, "UpdateDateLabel: Failed to get unified time");
-            return;
-        }
-        
-        // 使用年月日组合值比较，避免时区时间戳转换问题
-        int current_date = (timeinfo.tm_year + 1900) * 10000 + (timeinfo.tm_mon + 1) * 100 + timeinfo.tm_mday;
-        if (current_date == last_date_update && last_date_update != -1) {
-            return;
-        }
-        
-        // 使用静态数组减少栈使用
-        // static const char* weekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-        static const char* weekdays[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
-        int weekday = (timeinfo.tm_wday >= 0 && timeinfo.tm_wday <= 6) ? timeinfo.tm_wday : 0;
-        
-        // 格式化日期显示，确保月份和日期的正确性 - 使用安全的snprintf
-        int ret = snprintf(date_str, sizeof(date_str), "%02d/%02d%s", 
-                 timeinfo.tm_mon + 1, timeinfo.tm_mday, weekdays[weekday]);
-        if (ret >= sizeof(date_str)) {
-            ESP_LOGW(TAG, "UpdateDateLabel: Date string truncated");
-            return;
-        }
-        
-        // 添加LVGL对象有效性检查，确保在主线程中更新
-        lv_label_set_text(date_label_, date_str);
-        ESP_LOGI(TAG, "Date updated: %s (tm_mon=%d, tm_mday=%d, tm_wday=%d)", 
-                 date_str, timeinfo.tm_mon, timeinfo.tm_mday, timeinfo.tm_wday);
-        
-        last_date_update = current_date;
-        
-    } catch (...) {
-        ESP_LOGE(TAG, "UpdateDateLabel: Exception during date update");
+    // 使用TimeSyncManager的统一时间获取函数
+    auto& time_sync_manager = TimeSyncManager::GetInstance();
+    time_valid = time_sync_manager.GetUnifiedTime(&timeinfo);
+    
+    if (!time_valid) {
+        return;
     }
+    
+    // 使用年月日组合值比较，避免时区时间戳转换问题
+    int current_date = (timeinfo.tm_year + 1900) * 10000 + (timeinfo.tm_mon + 1) * 100 + timeinfo.tm_mday;
+    if (current_date == last_date_update && last_date_update != -1) {
+        return;
+    }
+    
+    // 使用静态数组减少栈使用
+    static const char* weekdays[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+    int weekday = (timeinfo.tm_wday >= 0 && timeinfo.tm_wday <= 6) ? timeinfo.tm_wday : 0;
+    
+    // 格式化日期显示，确保月份和日期的正确性 - 使用安全的snprintf
+    int ret = snprintf(date_str, sizeof(date_str), "%02d/%02d%s", 
+             timeinfo.tm_mon + 1, timeinfo.tm_mday, weekdays[weekday]);
+    if (ret >= sizeof(date_str)) {
+        return;
+    }
+    
+    // 添加LVGL对象有效性检查，确保在主线程中更新
+    lv_label_set_text(date_label_, date_str);
+    
+    last_date_update = current_date;
 }
+
+void ClockUI::ForceUpdateTimeLabel() {
+    if (!time_label_ || !is_visible_) return;
+    
+    static char time_str[32];
+    static char time_am_pm_str[32];
+    
+    // 使用TimeSyncManager的统一时间获取函数
+    struct tm timeinfo;
+    auto& time_sync_manager = TimeSyncManager::GetInstance();
+    
+    if (!time_sync_manager.GetUnifiedTime(&timeinfo)) {
+        return;
+    }
+    
+    // 转换为12小时制
+    int hour = timeinfo.tm_hour;
+    int minute = timeinfo.tm_min;
+    bool is_pm = hour >= 12;
+    
+    if (hour == 0) {
+        hour = 12;
+        if (time_am_pm_label_ && lv_obj_is_valid(time_am_pm_label_)) {
+            lv_obj_set_pos(time_am_pm_label_, LV_HOR_RES-25, 50);
+        }
+    } else if (hour > 12) {
+        hour -= 12;
+        if (time_am_pm_label_ && lv_obj_is_valid(time_am_pm_label_)) {
+            lv_obj_set_pos(time_am_pm_label_, LV_HOR_RES-25, 80);
+        }
+    }
+    
+    // 强制更新时间显示
+    snprintf(time_str, sizeof(time_str), "%02d:%02d", hour, minute);
+    snprintf(time_am_pm_str, sizeof(time_am_pm_str), "%s", is_pm ? "下" : "上");
+    
+    if (lv_obj_is_valid(time_label_)) {
         lv_label_set_text(time_label_, time_str);
+    }
+    
+    if (time_am_pm_label_ && lv_obj_is_valid(time_am_pm_label_)) {
         lv_label_set_text(time_am_pm_label_, time_am_pm_str);
-        ESP_LOGI(TAG, "Force updated time: %s %s", time_str, time_am_pm_str);
     }
 }
 
@@ -781,11 +803,9 @@ void ClockUI::ForceUpdateDateLabel() {
     auto& time_sync_manager = TimeSyncManager::GetInstance();
     
     if (!time_sync_manager.GetUnifiedTime(&timeinfo)) {
-        ESP_LOGW(TAG, "ForceUpdateDateLabel: Failed to get unified time");
         return;
     }
     
-    // const char* weekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     static const char* weekdays[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
     int weekday = timeinfo.tm_wday;
     
@@ -795,17 +815,10 @@ void ClockUI::ForceUpdateDateLabel() {
     
     if (lv_obj_is_valid(date_label_)) {
         lv_label_set_text(date_label_, date_str);
-        ESP_LOGI(TAG, "Force updated date: %s (mon=%d, mday=%d, wday=%d, year=%d)", 
-                 date_str, timeinfo.tm_mon, timeinfo.tm_mday, timeinfo.tm_wday, timeinfo.tm_year + 1900);
     }
 }
 
 void ClockUI::UpdateAlarmLabel() {
-    // 简化实现，暂时移除复杂的闹钟显示逻辑
-    return;
-}
-
-void ClockUI::UpdateNotificationLabel() {
     // 简化实现，暂时移除复杂的通知显示逻辑  
     return;
 }

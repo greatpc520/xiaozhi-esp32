@@ -930,7 +930,7 @@ public:
             };
             esp_timer_create(&timer_args, &clock_update_timer_);
         }
-        esp_timer_start_periodic(clock_update_timer_, 30 * 1000000); // 30秒间隔，从原来的5分钟改为30秒
+        esp_timer_start_periodic(clock_update_timer_, 30 * 1000000); // 30秒间隔
         
         ESP_LOGI(TAG, "Clock UI enabled with time validation and alarm cleanup");
     }
@@ -958,22 +958,13 @@ public:
             return;
         }
         
-        // 简单的时间检查，更新频率改为30秒
-        static time_t last_update = 0;
-        time_t current_time = time(nullptr);
-        
-        // 只有当时间变化超过30秒时才更新
-        if (current_time - last_update < 30) {
-            return;
-        }
-        last_update = current_time;
-        
-        // 用异步调度到主线程，保证LVGL线程安全
-        Application::GetInstance().Schedule([board]() {
-            if (board->clock_ui_ && board->clock_enabled_) {
-                board->clock_ui_->UpdateClockDisplay();
+        // 使用lv_async_call异步调用更新，避免在定时器上下文中直接调用LVGL函数
+        lv_async_call([](void* param) {
+            auto* b = static_cast<GctcamP4Board*>(param);
+            if (b->clock_ui_ && b->clock_enabled_) {
+                b->clock_ui_->UpdateClockDisplay();
             }
-        });
+        }, board);
     }
     
     virtual bool IsClockVisible() const override {
@@ -1026,7 +1017,7 @@ public:
             ESP_LOGI(TAG, "WiFi connected to %s, scheduling smart NTP sync", ssid.c_str());
             
             // 启动智能时间同步（异步、避免资源冲突、自动重试）
-            // ScheduleSmartTimeSync();
+            ScheduleSmartTimeSync();
         });
         
         // 调用基类的网络启动（但跳过基类的回调设置）
@@ -1087,12 +1078,11 @@ private:
                         display->ShowNotification("时间同步成功", 3000);
                     }
                     
-                                    // 如果时钟界面正在显示，立即更新时间显示
-                if (board_ptr->clock_ui_ && board_ptr->clock_enabled_ && board_ptr->IsClockVisible()) {
-                    ESP_LOGI(TAG, "Clock UI is visible, updating time display after NTP sync");
-                    
-                    // 使用异步调用确保在主线程中更新UI
-                    Application::GetInstance().Schedule([board_ptr]() {
+                    // 如果时钟界面正在显示，立即更新时间显示
+                    if (board_ptr->clock_ui_ && board_ptr->clock_enabled_ && board_ptr->IsClockVisible()) {
+                        ESP_LOGI(TAG, "Clock UI is visible, updating time display after NTP sync");
+                        
+                        // 直接调用更新函数而不是使用异步调用，避免线程本地存储问题
                         if (board_ptr->clock_ui_ && board_ptr->clock_enabled_) {
                             // 强制立即更新时钟显示
                             board_ptr->clock_ui_->ForceUpdateDisplay();
@@ -1100,7 +1090,6 @@ private:
                             board_ptr->clock_ui_->UpdateClockDisplay();
                             ESP_LOGI(TAG, "Clock UI time display updated after NTP sync");
                         }
-                    });
                     } else {
                         ESP_LOGI(TAG, "Clock UI not visible, time update will occur when clock is shown");
                     }
