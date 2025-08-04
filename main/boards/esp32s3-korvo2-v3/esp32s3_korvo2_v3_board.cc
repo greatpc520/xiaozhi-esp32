@@ -1,11 +1,10 @@
 #include "wifi_board.h"
-#include "audio_codecs/box_audio_codec.h"
+#include "codecs/box_audio_codec.h"
 #include "display/spi_lcd_anim_display.h" //"display/lcd_display.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
 #include "i2c_device.h"
-#include "iot/thing_manager.h"
 #include "alarm_info.h"
 #include "alarm_manager.h"
 #include "clock_ui.h"
@@ -722,7 +721,6 @@ public:
         InitializeSt7789Display(); 
         #endif
         // InitializeCamera_mc();
-        InitializeIot();
         InitializeClockAndAlarm();
         
         // 打印初始内存状态（轻量级检查）
