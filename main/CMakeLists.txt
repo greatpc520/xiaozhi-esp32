@@ -249,7 +249,7 @@ elseif(CONFIG_USE_CUSTOM_WAKE_WORD)
 endif()
 
 # 添加opus处理器到构建系统
-list(APPEND SOURCES "audio_processing/opus_processor.cc")
+list(APPEND SOURCES "audio/processors/opus_processor.cc")
 
 # 根据Kconfig选择语言目录
 if(CONFIG_LANGUAGE_ZH_CN)

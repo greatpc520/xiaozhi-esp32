@@ -112,7 +112,7 @@ bool OpusProcessor::ProcessAndSendOpusData(const std::string_view& opus_view, bo
         AudioStreamPacket audio_packet;
         audio_packet.payload = std::move(opus_packet);
         audio_packet.timestamp = 0; // 如果需要设置时间戳，这里可以修改
-        protocol->SendAudio(audio_packet);
+        protocol->SendAudio(std::make_unique<AudioStreamPacket>(audio_packet));
         packet_count++;
         ESP_LOGI(TAG, "已发送opus包 %d，大小: %d字节", packet_count, payload_size);
     }

@@ -458,7 +458,7 @@ void Display::DrawImageOnCanvas(int x, int y, int width, int height, const uint8
     heap_caps_free(scaled_buf);
     // ESP_LOGI("Display", "Image drawn on canvas at x=%d, y=%d, w=%d, h=%d", x, y, target_dim, target_dim);
 }
-
+/*
 void Display::CreateCanvas() {
     DisplayLockGuard lock(this);
     
@@ -646,7 +646,7 @@ void Display::DrawImageOnCanvas(int x, int y, int width, int height, const uint8
     heap_caps_free(scaled_buf);
     // ESP_LOGI("Display", "Image drawn on canvas at x=%d, y=%d, w=%d, h=%d", x, y, target_dim, target_dim);
 }
-
+*/
 void Display::SetPowerSaveMode(bool on) {
     if (on) {
         SetChatMessage("system", "");

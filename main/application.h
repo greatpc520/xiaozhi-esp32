@@ -35,18 +35,18 @@ enum AudioChannelClosedMode {
     kAudioChannelClosedModeWithActions = 2  // 模式2：执行motor_down和backlight_down
 };
 
-enum DeviceState {
-    kDeviceStateUnknown,
-    kDeviceStateStarting,
-    kDeviceStateWifiConfiguring,
-    kDeviceStateIdle,
-    kDeviceStateConnecting,
-    kDeviceStateListening,
-    kDeviceStateSpeaking,
-    kDeviceStateUpgrading,
-    kDeviceStateActivating,
-    kDeviceStateFatalError
-};
+// enum DeviceState {
+//     kDeviceStateUnknown,
+//     kDeviceStateStarting,
+//     kDeviceStateWifiConfiguring,
+//     kDeviceStateIdle,
+//     kDeviceStateConnecting,
+//     kDeviceStateListening,
+//     kDeviceStateSpeaking,
+//     kDeviceStateUpgrading,
+//     kDeviceStateActivating,
+//     kDeviceStateFatalError
+// };
 
 #define OPUS_FRAME_DURATION_MS 60
 #define MAX_AUDIO_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)

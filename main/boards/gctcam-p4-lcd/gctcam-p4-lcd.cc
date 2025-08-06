@@ -1,11 +1,11 @@
 #include "wifi_board.h"
-#include "audio_codecs/box_audio_codec.h"
+#include "audio/codecs/box_audio_codec.h"
 #include "display/spi_lcd_anim_display.h" //"display/lcd_display.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
 #include "i2c_device.h"
-#include "iot/thing_manager.h"
+// #include "iot/thing_manager.h"
 #include "alarm_info.h"
 #include "alarm_manager.h"
 #include "clock_ui.h"
@@ -492,13 +492,13 @@ private:
         }
     }
     // 物联网初始化，添加对 AI 可见设备
-    void InitializeIot() {
-        auto& thing_manager = iot::ThingManager::GetInstance();
-        thing_manager.AddThing(iot::CreateThing("Speaker"));
-        thing_manager.AddThing(iot::CreateThing("Chassis"));
-        // thing_manager.AddThing(iot::CreateThing("Camera"));
-        thing_manager.AddThing(iot::CreateThing("ImageDisplayer"));
-    }
+    // void InitializeIot() {
+    //     auto& thing_manager = iot::ThingManager::GetInstance();
+    //     thing_manager.AddThing(iot::CreateThing("Speaker"));
+    //     thing_manager.AddThing(iot::CreateThing("Chassis"));
+    //     // thing_manager.AddThing(iot::CreateThing("Camera"));
+    //     thing_manager.AddThing(iot::CreateThing("ImageDisplayer"));
+    // }
 
         void init_sd()
     {
@@ -724,7 +724,7 @@ public:
         // InitializeCamera_mc();
         // InitializeIot();
         GetBacklight()->RestoreBrightness();
-        InitializeClockAndAlarm();
+        // InitializeClockAndAlarm();
         
         // 打印初始内存状态（轻量级检查）
         // CheckMemoryIfNeeded();
@@ -988,7 +988,8 @@ public:
     }
     
     // 重写WiFi网络启动，添加智能时间同步
-    virtual void StartNetwork() override {
+    // virtual void StartNetwork() override {
+    void StartNetwork2()  {
         // 先设置WiFi回调，再调用基类的网络启动
         auto& wifi_station = WifiStation::GetInstance();
         
@@ -1017,7 +1018,7 @@ public:
             ESP_LOGI(TAG, "WiFi connected to %s, scheduling smart NTP sync", ssid.c_str());
             
             // 启动智能时间同步（异步、避免资源冲突、自动重试）
-            ScheduleSmartTimeSync();
+            // ScheduleSmartTimeSync();
         });
         
         // 调用基类的网络启动（但跳过基类的回调设置）

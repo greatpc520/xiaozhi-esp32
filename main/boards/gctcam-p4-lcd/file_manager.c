@@ -190,7 +190,7 @@ host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;  // 设置为高速模式
     // Card has been initialized, print its properties
     sdmmc_card_print_info(stdout, card);
     flag_mount = true;
-    test_sd_card();
+    // test_sd_card();
     return ESP_OK;
 }
 
